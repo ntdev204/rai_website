@@ -12,7 +12,7 @@ from app.core.config import settings
 _logs: deque[dict[str, Any]] = deque(maxlen=settings.WEBSITE_LOG_BUFFER_SIZE)
 _lock = threading.Lock()
 _counter = count(1)
-_handler_name = "website_runtime_log_buffer"
+_handler_name = "rai_website_runtime_log_buffer"
 
 
 class RuntimeLogBufferHandler(logging.Handler):
@@ -23,7 +23,7 @@ class RuntimeLogBufferHandler(logging.Handler):
                 "id": f"runtime-{next(_counter)}",
                 "event_type": record.name,
                 "severity": record.levelname.upper(),
-                "source": "website.server",
+                "source": "rai_website.server",
                 "message": message,
                 "metadata_json": {
                     "logger": record.name,

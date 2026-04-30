@@ -46,7 +46,7 @@ async def record_client_log(body: ClientLogRequest):
     await log_service.log_event(
         event_type=body.event_type,
         severity=body.severity,
-        source="website.client",
+        source="rai_website.client",
         message=body.message,
         metadata_json=body.metadata_json,
     )

@@ -26,8 +26,8 @@ const sources = [
   { label: "All sources", value: "" },
   { label: "context-aware", value: "context-aware" },
   { label: "wheeltec_ros2", value: "wheeltec_ros2" },
-  { label: "website.server", value: "website.server" },
-  { label: "website.client", value: "website.client" },
+  { label: "rai_website.server", value: "rai_website.server" },
+  { label: "rai_website.client", value: "rai_website.client" },
   { label: "database", value: "database" },
 ];
 

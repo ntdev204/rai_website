@@ -21,18 +21,18 @@ async def lifespan(app: FastAPI):
     await start_jetson_proxy()
     await start_zmq_bridge()
     await start_analytics_collector()
-    await log_event("server_start", "info", "website.server", "Website backend started")
+    await log_event("server_start", "info", "rai_website.server", "rai_website backend started")
     yield
     # Shutdown
-    await log_event("server_stop", "info", "website.server", "Website backend stopped")
+    await log_event("server_stop", "info", "rai_website.server", "rai_website backend stopped")
     await stop_analytics_collector()
     await stop_zmq_bridge()
     await stop_jetson_proxy()
 
 
 app = FastAPI(
-    title="Robot Dashboard API",
-    description="Backend for Robot Monitoring & Control",
+    title="rai_website API",
+    description="Backend for rai_website monitoring and control",
     version="1.0.0",
     lifespan=lifespan,
 )
@@ -64,4 +64,4 @@ app.include_router(ws_video.router)
 
 @app.get("/health")
 async def health_check():
-    return {"status": "ok", "service": "robot_dashboard_api"}
+    return {"status": "ok", "service": "rai_website_api"}
