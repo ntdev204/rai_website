@@ -9,7 +9,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 interface DetectionItem {
   track_id: number;
-  bbox: number[];
   class_name: string;
   confidence: number;
   distance?: number;
