@@ -14,8 +14,8 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_OWNER: ${{ github.repository_owner }}
-  SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/website-server
-  CLIENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-client
+  SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/rai-website-server
+  CLIENT_IMAGE: ghcr.io/${{ github.repository_owner }}/rai-website-client
 
 jobs:
   build-and-push:
@@ -33,8 +33,8 @@ jobs:
 
       - name: Set image names
         run: |
-          echo "SERVER_IMAGE=ghcr.io/${{ steps.owner.outputs.value }}/website-server" >> "$GITHUB_ENV"
-          echo "CLIENT_IMAGE=ghcr.io/${{ steps.owner.outputs.value }}/website-client" >> "$GITHUB_ENV"
+          echo "SERVER_IMAGE=ghcr.io/${{ steps.owner.outputs.value }}/rai-website-server" >> "$GITHUB_ENV"
+          echo "CLIENT_IMAGE=ghcr.io/${{ steps.owner.outputs.value }}/rai-website-client" >> "$GITHUB_ENV"
 
       - name: Set metadata
         id: meta
@@ -53,8 +53,8 @@ jobs:
       - name: Build and push server image
         uses: docker/build-push-action@v6
         with:
-          context: ./website/server
-          file: ./website/server/Dockerfile
+          context: ./server
+          file: ./server/Dockerfile
           push: true
           tags: |
             ${{ env.SERVER_IMAGE }}:${{ github.sha }}
@@ -65,8 +65,8 @@ jobs:
       - name: Build and push client image
         uses: docker/build-push-action@v6
         with:
-          context: ./website/client
-          file: ./website/client/Dockerfile
+          context: ./client
+          file: ./client/Dockerfile
           push: true
           tags: |
             ${{ env.CLIENT_IMAGE }}:${{ github.sha }}
@@ -89,15 +89,15 @@ jobs:
           host: ${{ secrets.PROD_HOST }}
           username: ${{ secrets.PROD_USER }}
           key: ${{ secrets.PROD_SSH_KEY }}
-          source: "website/docker-compose.prod.yml"
+          source: "docker-compose.prod.yml"
           target: "${{ secrets.PROD_PATH }}"
           strip_components: 1
 
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/website-server
-          CLIENT_IMAGE: ghcr.io/${{ github.repository_owner }}/website-client
+          SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/rai-website-server
+          CLIENT_IMAGE: ghcr.io/${{ github.repository_owner }}/rai-website-client
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         with:
           host: ${{ secrets.PROD_HOST }}

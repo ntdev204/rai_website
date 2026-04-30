@@ -58,6 +58,8 @@ services:
     ports:
       - "3000:3000"
 
+name: rai_website
+
 volumes:
   pgdata:
   face-data:
