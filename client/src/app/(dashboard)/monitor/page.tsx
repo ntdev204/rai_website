@@ -3,9 +3,9 @@
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { fetchWithAuth } from "@/lib/api";
-import { Activity, Radio, UserRound, VideoOff } from "lucide-react";
+import { Activity, Download, Play, Radio, Square, Trash2, UserRound, VideoOff } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 interface DetectionItem {
   track_id: number;
@@ -34,13 +34,30 @@ interface MetricsPayload {
   obstacles?: number;
 }
 
+interface DatasetStatus {
+  status: "idle" | "recording" | "stopped" | "discarded";
+  dataset_mode?: DatasetMode | null;
+  session_id?: string;
+  frame_count?: number;
+  bytes_total?: number;
+  preview_indexes?: number[];
+}
+
+type DatasetMode = "intent_cnn" | "rl";
+
 export default function MonitorPage() {
   const imgRef = useRef<HTMLImageElement | null>(null);
   const lastUrlRef = useRef<string | null>(null);
+  const previewUrlsRef = useRef<string[]>([]);
   const [hasFrame, setHasFrame] = useState(false);
   const [streamStatus, setStreamStatus] = useState("No frames received");
   const [detections, setDetections] = useState<DetectionPayload>({});
   const [metrics, setMetrics] = useState<MetricsPayload>({});
+  const [dataset, setDataset] = useState<DatasetStatus>({ status: "idle" });
+  const [datasetBusy, setDatasetBusy] = useState(false);
+  const [datasetMessage, setDatasetMessage] = useState("");
+  const [datasetMode, setDatasetMode] = useState<DatasetMode>("intent_cnn");
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
 
   const { isConnected } = useWebSocket("/ws/video", {
     binaryType: "blob",
@@ -62,13 +79,33 @@ export default function MonitorPage() {
     },
   });
 
+  const clearPreviewUrls = useCallback(() => {
+    previewUrlsRef.current.forEach((url) => URL.revokeObjectURL(url));
+    previewUrlsRef.current = [];
+    setPreviewUrls([]);
+  }, []);
+
+  const loadPreviewFrames = useCallback(async (status: DatasetStatus) => {
+    clearPreviewUrls();
+    const indexes = status.preview_indexes ?? [];
+    const urls = await Promise.all(
+      indexes.map(async (index) => {
+        const response = await fetchWithAuth(`/api/datasets/collection/preview/${index}`);
+        return URL.createObjectURL(await response.blob());
+      }),
+    );
+    previewUrlsRef.current = urls;
+    setPreviewUrls(urls);
+  }, [clearPreviewUrls]);
+
   useEffect(() => {
     return () => {
       if (lastUrlRef.current) {
         URL.revokeObjectURL(lastUrlRef.current);
       }
+      clearPreviewUrls();
     };
-  }, []);
+  }, [clearPreviewUrls]);
 
   useEffect(() => {
     let cancelled = false;
@@ -98,6 +135,111 @@ export default function MonitorPage() {
 
   const persons = detections.persons ?? [];
   const obstacles = detections.obstacles ?? [];
+  const isRecording = dataset.status === "recording";
+  const canReview = dataset.status === "stopped" && (dataset.frame_count ?? 0) > 0;
+
+  const startCollection = async () => {
+      setDatasetBusy(true);
+      setDatasetMessage("");
+      try {
+        clearPreviewUrls();
+      const response = await fetchWithAuth("/api/datasets/collection/start", {
+        method: "POST",
+        body: JSON.stringify({ mode: datasetMode }),
+      });
+      const status = await response.json();
+      setDataset(status);
+      if (status.dataset_mode === "intent_cnn" || status.dataset_mode === "rl") {
+        setDatasetMode(status.dataset_mode);
+      }
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot start collection");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  const stopCollection = async () => {
+    setDatasetBusy(true);
+    setDatasetMessage("");
+    try {
+      const response = await fetchWithAuth("/api/datasets/collection/stop", { method: "POST" });
+      const status = await response.json();
+      setDataset(status);
+      if (status.status === "stopped") {
+        await loadPreviewFrames(status);
+      }
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot stop collection");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  const discardCollection = async () => {
+    setDatasetBusy(true);
+    setDatasetMessage("");
+    try {
+      await fetchWithAuth("/api/datasets/collection", { method: "DELETE" });
+      clearPreviewUrls();
+      setDataset({ status: "idle" });
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot discard collection");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  const saveCollection = async () => {
+    setDatasetBusy(true);
+    setDatasetMessage("");
+    try {
+      const response = await fetchWithAuth("/api/datasets/collection/save");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const disposition = response.headers.get("Content-Disposition") ?? "";
+      const match = disposition.match(/filename="?([^"]+)"?/);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = match?.[1] ?? "dataset.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      clearPreviewUrls();
+      setDataset({ status: "idle" });
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot save dataset");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStatus = async () => {
+      try {
+        const response = await fetchWithAuth("/api/datasets/collection");
+        const status = await response.json();
+        if (cancelled) return;
+        setDataset(status);
+        if (status.dataset_mode === "intent_cnn" || status.dataset_mode === "rl") {
+          setDatasetMode(status.dataset_mode);
+        }
+        if (status.status === "stopped") {
+          await loadPreviewFrames(status);
+        }
+      } catch {
+        if (!cancelled) {
+          setDataset({ status: "idle" });
+        }
+      }
+    };
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, [loadPreviewFrames]);
 
   return (
     <div className="space-y-6">
@@ -151,8 +293,105 @@ export default function MonitorPage() {
               <Metric label="Status" value={hasFrame ? "streaming" : "waiting"} />
             </div>
           </section>
+
+          <section className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Download className="w-4 h-4 text-indigo-600" />
+                Dataset
+              </div>
+              <StatusBadge status={isRecording ? "success" : canReview ? "warning" : "default"}>
+                {dataset.status}
+              </StatusBadge>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+              <Metric label="Type" value={formatDatasetMode(dataset.dataset_mode ?? datasetMode)} />
+              <Metric label="Frames" value={String(dataset.frame_count ?? 0)} />
+              <Metric label="Size" value={formatBytes(dataset.bytes_total ?? 0)} />
+            </div>
+            <div className="mb-4 grid grid-cols-2 rounded-md border border-slate-200 bg-slate-50 p-1 text-sm">
+              <button
+                type="button"
+                onClick={() => setDatasetMode("intent_cnn")}
+                disabled={datasetBusy || dataset.status !== "idle"}
+                className={`rounded px-3 py-2 font-semibold ${
+                  datasetMode === "intent_cnn" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+                } disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                Intent CNN
+              </button>
+              <button
+                type="button"
+                onClick={() => setDatasetMode("rl")}
+                disabled={datasetBusy || dataset.status !== "idle"}
+                className={`rounded px-3 py-2 font-semibold ${
+                  datasetMode === "rl" ? "bg-white text-slate-900 shadow-sm" : "text-slate-600"
+                } disabled:cursor-not-allowed disabled:opacity-60`}
+              >
+                RL
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={startCollection}
+                disabled={datasetBusy || isRecording}
+                className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Play className="h-4 w-4" />
+                Start
+              </button>
+              <button
+                type="button"
+                onClick={stopCollection}
+                disabled={datasetBusy || !isRecording}
+                className="inline-flex items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Square className="h-4 w-4" />
+                Stop
+              </button>
+              <button
+                type="button"
+                onClick={saveCollection}
+                disabled={datasetBusy || !canReview}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Download className="h-4 w-4" />
+                Save
+              </button>
+              <button
+                type="button"
+                onClick={discardCollection}
+                disabled={datasetBusy || dataset.status === "idle"}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4" />
+                Clear
+              </button>
+            </div>
+            {datasetMessage && <div className="mt-3 text-sm text-rose-600">{datasetMessage}</div>}
+          </section>
         </div>
       </div>
+
+      {canReview && (
+        <section className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 mb-4">
+            <Download className="w-4 h-4 text-indigo-600" />
+            Saved Frames
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3">
+            {previewUrls.map((url, index) => (
+              <img
+                key={url}
+                src={url}
+                alt={`Collected frame ${index + 1}`}
+                className="aspect-video w-full rounded-md border border-slate-200 bg-black object-cover"
+              />
+            ))}
+          </div>
+        </section>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <DetectionTable title="Persons" icon={<UserRound className="w-4 h-4 text-emerald-600" />} rows={persons} />
@@ -226,4 +465,16 @@ function formatValue(value?: number) {
 
 function formatPercent(value?: number) {
   return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value * 100)}%` : "-";
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function formatDatasetMode(mode?: string | null) {
+  if (mode === "rl") return "RL";
+  return "Intent CNN";
 }

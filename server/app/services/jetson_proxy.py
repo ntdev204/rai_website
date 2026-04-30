@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -137,6 +138,82 @@ async def patch_config(updates: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:
         logger.error("Jetson /config PATCH failed: %s", exc)
         return {"error": str(exc)}
+
+
+async def dataset_status() -> dict[str, Any]:
+    try:
+        r = await _client.get("/dataset/status")
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.warning("Jetson /dataset/status failed: %s", exc)
+        return {"status": "unreachable", "error": str(exc)}
+
+
+async def dataset_start(mode: str) -> dict[str, Any]:
+    try:
+        r = await _client.post("/dataset/start", json={"mode": mode})
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson /dataset/start failed: %s", exc)
+        return {"error": str(exc)}
+
+
+async def dataset_stop() -> dict[str, Any]:
+    try:
+        r = await _client.post("/dataset/stop")
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson /dataset/stop failed: %s", exc)
+        return {"error": str(exc)}
+
+
+async def dataset_discard() -> dict[str, Any]:
+    try:
+        r = await _client.delete("/dataset")
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson DELETE /dataset failed: %s", exc)
+        return {"error": str(exc)}
+
+
+async def dataset_preview(index: int) -> tuple[bytes, str]:
+    try:
+        r = await _client.get(f"/dataset/preview/{index}")
+        r.raise_for_status()
+        return r.content, r.headers.get("content-type", "image/jpeg")
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code
+        raise RuntimeError(f"Jetson preview failed with status {status}") from exc
+    except Exception as exc:
+        raise RuntimeError(f"Jetson preview failed: {exc}") from exc
+
+
+async def dataset_download() -> tuple[AsyncIterator[bytes], dict[str, str]]:
+    try:
+        request = _client.build_request("GET", "/dataset/download")
+        response = await _client.send(request, stream=True)
+        response.raise_for_status()
+    except Exception as exc:
+        logger.error("Jetson /dataset/download failed: %s", exc)
+        raise RuntimeError(str(exc)) from exc
+
+    headers = {
+        "content-type": response.headers.get("content-type", "application/zip"),
+        "content-disposition": response.headers.get("content-disposition", ""),
+    }
+
+    async def _iter() -> AsyncIterator[bytes]:
+        try:
+            async for chunk in response.aiter_bytes():
+                yield chunk
+        finally:
+            await response.aclose()
+
+    return _iter(), headers
 
 
 async def stream_mjpeg_frames():

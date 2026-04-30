@@ -5,8 +5,9 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import analytics, auth, configs, logs, maps, nodes, patrol, robot, users
+from app.routers import analytics, auth, configs, datasets, logs, maps, nodes, patrol, robot, users
 from app.routers import ws_control, ws_telemetry, ws_video
+from app.core.seed import seed_admin
 from app.services.analytics_service import start_analytics_collector, stop_analytics_collector
 from app.services.log_service import log_event
 from app.services.runtime_log_buffer import install_runtime_log_handler
@@ -17,6 +18,7 @@ from app.services.jetson_proxy import start_jetson_proxy, stop_jetson_proxy
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
+    await seed_admin()
     install_runtime_log_handler()
     await start_jetson_proxy()
     await start_zmq_bridge()
@@ -55,6 +57,7 @@ app.include_router(nodes.router)
 app.include_router(patrol.router)
 app.include_router(maps.router)
 app.include_router(configs.router)
+app.include_router(datasets.router)
 
 # WebSocket routers
 app.include_router(ws_control.router)
