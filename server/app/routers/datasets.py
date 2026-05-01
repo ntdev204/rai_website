@@ -102,5 +102,6 @@ async def download_collection():
 
 
 def _raise_proxy_error(result: dict):
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+    error = result.get("error")
+    if error:
+        raise HTTPException(status_code=400, detail=error)

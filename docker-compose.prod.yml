@@ -33,6 +33,7 @@ services:
       ZMQ_TELEMETRY_PORT: ${ZMQ_TELEMETRY_PORT:-5556}
       ZMQ_CAMERA_PORT: ${ZMQ_CAMERA_PORT:-5557}
       JETSON_API_URL: ${JETSON_API_URL}
+      TRAINING_API_URL: ${TRAINING_API_URL:-http://host.docker.internal:8081}
       ANALYTICS_COLLECT_INTERVAL_SEC: ${ANALYTICS_COLLECT_INTERVAL_SEC:-5}
       ANALYTICS_RETENTION_HOURS: ${ANALYTICS_RETENTION_HOURS:-168}
       WEBSITE_LOG_BUFFER_SIZE: ${WEBSITE_LOG_BUFFER_SIZE:-500}
@@ -45,6 +46,8 @@ services:
       - face-data:/app/data/faces
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   client:
     image: ${CLIENT_IMAGE}:${IMAGE_TAG:-latest}

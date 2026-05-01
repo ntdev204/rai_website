@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     ZMQ_CAMERA_PORT: int = 5557
     
     JETSON_API_URL: str = "http://25.12.4.100:8080"
+    TRAINING_API_URL: str = "http://localhost:8081"
     ANALYTICS_COLLECT_INTERVAL_SEC: float = 5.0
     ANALYTICS_RETENTION_HOURS: int = 168
     WEBSITE_LOG_BUFFER_SIZE: int = 500
