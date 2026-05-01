@@ -180,6 +180,46 @@ async def dataset_discard() -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+async def dataset_save() -> dict[str, Any]:
+    try:
+        r = await _client.post("/dataset/save")
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson /dataset/save failed: %s", exc)
+        return {"error": str(exc)}
+
+
+async def dataset_images() -> dict[str, Any]:
+    try:
+        r = await _client.get("/dataset/images")
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson /dataset/images failed: %s", exc)
+        return {"error": str(exc)}
+
+
+async def dataset_delete_image(index: int) -> dict[str, Any]:
+    try:
+        r = await _client.delete(f"/dataset/images/{index}")
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson DELETE /dataset/images/%s failed: %s", index, exc)
+        return {"error": str(exc)}
+
+
+async def dataset_autolabel() -> dict[str, Any]:
+    try:
+        r = await _client.post("/dataset/autolabel", timeout=120.0)
+        r.raise_for_status()
+        return r.json()
+    except Exception as exc:
+        logger.error("Jetson /dataset/autolabel failed: %s", exc)
+        return {"error": str(exc)}
+
+
 async def dataset_preview(index: int) -> tuple[bytes, str]:
     try:
         r = await _client.get(f"/dataset/preview/{index}")
