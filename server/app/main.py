@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import analytics, auth, configs, datasets, logs, maps, nodes, patrol, robot, users
+from app.routers import analytics, auth, configs, datasets, logs, maps, nodes, patrol, robot, training, users
 from app.routers import ws_control, ws_telemetry, ws_video
 from app.core.seed import seed_admin
 from app.services.analytics_service import start_analytics_collector, stop_analytics_collector
@@ -13,6 +13,7 @@ from app.services.log_service import log_event
 from app.services.runtime_log_buffer import install_runtime_log_handler
 from app.services.zmq_bridge import start_zmq_bridge, stop_zmq_bridge
 from app.services.jetson_proxy import start_jetson_proxy, stop_jetson_proxy
+from app.services.training_proxy import start_training_proxy, stop_training_proxy
 
 
 @asynccontextmanager
@@ -21,6 +22,7 @@ async def lifespan(app: FastAPI):
     await seed_admin()
     install_runtime_log_handler()
     await start_jetson_proxy()
+    await start_training_proxy()
     await start_zmq_bridge()
     await start_analytics_collector()
     await log_event("server_start", "info", "rai_website.server", "rai_website backend started")
@@ -29,6 +31,7 @@ async def lifespan(app: FastAPI):
     await log_event("server_stop", "info", "rai_website.server", "rai_website backend stopped")
     await stop_analytics_collector()
     await stop_zmq_bridge()
+    await stop_training_proxy()
     await stop_jetson_proxy()
 
 
@@ -58,6 +61,7 @@ app.include_router(patrol.router)
 app.include_router(maps.router)
 app.include_router(configs.router)
 app.include_router(datasets.router)
+app.include_router(training.router)
 
 # WebSocket routers
 app.include_router(ws_control.router)
