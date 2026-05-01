@@ -46,6 +46,34 @@ async def discard_collection():
     return result
 
 
+@router.post("/collection/save")
+async def save_collection():
+    result = await jetson_proxy.dataset_save()
+    _raise_proxy_error(result)
+    return result
+
+
+@router.get("/collection/images")
+async def collection_images():
+    result = await jetson_proxy.dataset_images()
+    _raise_proxy_error(result)
+    return result
+
+
+@router.delete("/collection/images/{index}")
+async def delete_collection_image(index: int):
+    result = await jetson_proxy.dataset_delete_image(index)
+    _raise_proxy_error(result)
+    return result
+
+
+@router.post("/collection/autolabel")
+async def autolabel_collection():
+    result = await jetson_proxy.dataset_autolabel()
+    _raise_proxy_error(result)
+    return result
+
+
 @router.get("/collection/preview/{index}")
 async def preview_frame(index: int):
     try:
@@ -55,8 +83,8 @@ async def preview_frame(index: int):
     return Response(content=content, media_type=media_type)
 
 
-@router.get("/collection/save")
-async def save_collection():
+@router.get("/collection/download")
+async def download_collection():
     try:
         stream, headers = await jetson_proxy.dataset_download()
     except RuntimeError as exc:
