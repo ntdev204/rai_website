@@ -3,16 +3,16 @@
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { fetchWithAuth } from "@/lib/api";
-import { Activity, Radio, UserRound, VideoOff } from "lucide-react";
+import { Activity, Database, Play, Radio, Save, Square, UserRound, VideoOff } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 
 interface DetectionItem {
   track_id: number;
-  bbox: number[];
   class_name: string;
   confidence: number;
   distance?: number;
+  distance_source?: string;
   intent_name?: string;
   intent_confidence?: number;
 }
@@ -34,6 +34,17 @@ interface MetricsPayload {
   obstacles?: number;
 }
 
+interface DatasetStatus {
+  status: "idle" | "recording" | "stopped" | "discarded";
+  dataset_mode?: DatasetMode | null;
+  session_id?: string;
+  frame_count?: number;
+  bytes_total?: number;
+  saved?: boolean;
+}
+
+type DatasetMode = "intent_cnn" | "rl";
+
 export default function MonitorPage() {
   const imgRef = useRef<HTMLImageElement | null>(null);
   const lastUrlRef = useRef<string | null>(null);
@@ -41,6 +52,9 @@ export default function MonitorPage() {
   const [streamStatus, setStreamStatus] = useState("No frames received");
   const [detections, setDetections] = useState<DetectionPayload>({});
   const [metrics, setMetrics] = useState<MetricsPayload>({});
+  const [dataset, setDataset] = useState<DatasetStatus>({ status: "idle" });
+  const [datasetBusy, setDatasetBusy] = useState(false);
+  const [datasetMessage, setDatasetMessage] = useState("");
 
   const { isConnected } = useWebSocket("/ws/video", {
     binaryType: "blob",
@@ -98,6 +112,90 @@ export default function MonitorPage() {
 
   const persons = detections.persons ?? [];
   const obstacles = detections.obstacles ?? [];
+  const isRecording = dataset.status === "recording";
+  const canSave = dataset.status === "stopped" && (dataset.frame_count ?? 0) > 0;
+
+  const startCollection = async () => {
+      setDatasetBusy(true);
+      setDatasetMessage("");
+      try {
+      const response = await fetchWithAuth("/api/datasets/collection/start", {
+        method: "POST",
+        body: JSON.stringify({ mode: "intent_cnn" }),
+      });
+      const status = await response.json();
+      setDataset(status);
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot start collection");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  const stopCollection = async () => {
+    setDatasetBusy(true);
+    setDatasetMessage("");
+    try {
+      const response = await fetchWithAuth("/api/datasets/collection/stop", { method: "POST" });
+      const status = await response.json();
+      setDataset(status);
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot stop collection");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  const saveCollection = async () => {
+    setDatasetBusy(true);
+    setDatasetMessage("");
+    try {
+      const response = await fetchWithAuth("/api/datasets/collection/save", { method: "POST" });
+      const status = await response.json();
+      setDataset(status);
+      await downloadRawCollection();
+      setDatasetMessage("Raw sequence dataset downloaded. Upload that zip on Dataset to run server auto-label.");
+    } catch (error) {
+      setDatasetMessage(error instanceof Error ? error.message : "Cannot save dataset");
+    } finally {
+      setDatasetBusy(false);
+    }
+  };
+
+  const downloadRawCollection = async () => {
+    const response = await fetchWithAuth("/api/datasets/collection/download");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = decodeURIComponent(match?.[1] ?? "context_aware_raw_sequences.zip");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadStatus = async () => {
+      try {
+        const response = await fetchWithAuth("/api/datasets/collection");
+        const status = await response.json();
+        if (cancelled) return;
+        setDataset(status);
+      } catch {
+        if (!cancelled) {
+          setDataset({ status: "idle" });
+        }
+      }
+    };
+    void loadStatus();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -150,6 +248,54 @@ export default function MonitorPage() {
               <Metric label="Frame" value={String(detections.frame_id ?? "-")} />
               <Metric label="Status" value={hasFrame ? "streaming" : "waiting"} />
             </div>
+          </section>
+
+          <section className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
+            <div className="flex items-center justify-between gap-3 mb-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Database className="w-4 h-4 text-indigo-600" />
+                Capture
+              </div>
+              <StatusBadge status={isRecording ? "success" : canSave ? "warning" : "default"}>
+                {dataset.status}
+              </StatusBadge>
+            </div>
+            <div className="grid grid-cols-2 gap-3 text-sm mb-4">
+              <Metric label="Type" value={formatDatasetMode(dataset.dataset_mode)} />
+              <Metric label="Frames" value={String(dataset.frame_count ?? 0)} />
+              <Metric label="Size" value={formatBytes(dataset.bytes_total ?? 0)} />
+              <Metric label="Saved" value={dataset.saved ? "yes" : "no"} />
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={startCollection}
+                disabled={datasetBusy || isRecording}
+                className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Play className="h-4 w-4" />
+                Start
+              </button>
+              <button
+                type="button"
+                onClick={stopCollection}
+                disabled={datasetBusy || !isRecording}
+                className="inline-flex items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Square className="h-4 w-4" />
+                Stop
+              </button>
+              <button
+                type="button"
+                onClick={saveCollection}
+                disabled={datasetBusy || !canSave}
+                className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Save className="h-4 w-4" />
+                Save
+              </button>
+            </div>
+            {datasetMessage && <div className="mt-3 text-sm text-rose-600">{datasetMessage}</div>}
           </section>
         </div>
       </div>
@@ -208,7 +354,7 @@ function DetectionTable({
                   <td className="py-2 pr-3 font-mono">{row.track_id}</td>
                   <td className="py-2 pr-3">{row.class_name}</td>
                   <td className="py-2 pr-3">{formatPercent(row.confidence)}</td>
-                  <td className="py-2 pr-3">{typeof row.distance === "number" ? `${row.distance.toFixed(2)}m` : "-"}</td>
+                  <td className="py-2 pr-3">{formatDistance(row.distance, row.distance_source)}</td>
                   <td className="py-2 pr-3">{row.intent_name ?? "-"}</td>
                 </tr>
               ))
@@ -226,4 +372,22 @@ function formatValue(value?: number) {
 
 function formatPercent(value?: number) {
   return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value * 100)}%` : "-";
+}
+
+function formatBytes(value: number) {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1);
+  return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
+}
+
+function formatDatasetMode(mode?: string | null) {
+  if (mode === "rl") return "RL";
+  return "Intent CNN";
+}
+
+function formatDistance(distance?: number, source?: string) {
+  if (source !== "depth") return "N/A";
+  if (typeof distance !== "number" || !Number.isFinite(distance)) return "N/A";
+  return `${distance.toFixed(2)}m`;
 }
