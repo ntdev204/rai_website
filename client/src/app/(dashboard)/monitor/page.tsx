@@ -153,12 +153,28 @@ export default function MonitorPage() {
       const response = await fetchWithAuth("/api/datasets/collection/save", { method: "POST" });
       const status = await response.json();
       setDataset(status);
-      setDatasetMessage("Raw preview saved. Open Dataset to review and auto-label manually.");
+      await downloadRawCollection();
+      setDatasetMessage("Raw sequence dataset downloaded. Upload that zip on Dataset to run server auto-label.");
     } catch (error) {
       setDatasetMessage(error instanceof Error ? error.message : "Cannot save dataset");
     } finally {
       setDatasetBusy(false);
     }
+  };
+
+  const downloadRawCollection = async () => {
+    const response = await fetchWithAuth("/api/datasets/collection/download");
+    const blob = await response.blob();
+    const url = URL.createObjectURL(blob);
+    const disposition = response.headers.get("Content-Disposition") ?? "";
+    const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = decodeURIComponent(match?.[1] ?? "context_aware_raw_sequences.zip");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(url);
   };
 
   useEffect(() => {

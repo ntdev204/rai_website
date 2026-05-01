@@ -31,6 +31,10 @@ class Settings(BaseSettings):
     FACE_DATA_DIR: str = "/app/data/faces"
     FACE_MIN_IMAGES: int = 8
     FACE_MAX_IMAGES: int = 20
+    DATASET_DATA_DIR: str = "/app/data/datasets"
+    OLLAMA_URL: str = "http://host.docker.internal:11434"
+    OLLAMA_VLM_MODEL: str = ""
+    OLLAMA_LLM_MODEL: str = "llama3.1"
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

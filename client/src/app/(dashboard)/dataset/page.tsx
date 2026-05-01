@@ -2,52 +2,66 @@
 
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { fetchWithAuth } from "@/lib/api";
-import { CheckCircle2, Database, Download, RefreshCw, Sparkles, Trash2 } from "lucide-react";
+import { CheckCircle2, Database, Download, RefreshCw, Sparkles, Upload } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
-interface DatasetStatus {
-  status: "idle" | "recording" | "stopped" | "discarded" | "unavailable";
-  dataset_mode?: string | null;
-  session_id?: string;
-  frame_count?: number;
-  bytes_total?: number;
-  saved?: boolean;
+interface ServerDatasetStatus {
+  status: "empty" | "raw_ready" | "auto_labeled";
   dataset_stage?: string;
-  autolabeled?: boolean;
+  dataset_id?: string;
+  session_id?: string;
+  raw_dir?: string;
+  labeled_dir?: string | null;
+  train_dataset_dir?: string | null;
+  sequence_count?: number;
+  frame_count?: number;
+  rejected_count?: number;
+  class_counts?: Record<string, number>;
+  review_pending?: Record<string, number>;
+  ready_for_training?: boolean;
 }
 
-interface DatasetImage {
-  index: number;
-  file: string;
-  frame_id?: number;
-  track_id?: number | string;
-  timestamp?: number;
+interface SequenceLabel {
+  primary_label: string;
+  secondary_label?: string | null;
+  label_source: string;
+  confidence: number;
+  review_status: string;
+  notes?: string;
+}
+
+interface SequenceItem {
+  sequence_id: string;
+  session_id?: string;
+  track_id?: string;
+  frame_count: number;
+  depth_valid_ratio: number;
+  label?: SequenceLabel | null;
   metadata: Record<string, unknown>;
 }
 
-interface DatasetImagesResponse {
-  session_id?: string;
+interface SequenceResponse extends ServerDatasetStatus {
   count: number;
-  images: DatasetImage[];
+  sequences: SequenceItem[];
 }
 
 interface AutolabelResult {
   status?: string;
   train_dataset_dir?: string;
-  report_path?: string;
-  validation_status?: number | null;
-  ready_for_phase2_training?: boolean;
+  sequence_count?: number;
+  class_counts?: Record<string, number>;
+  review_pending?: Record<string, number>;
+  ready_for_training?: boolean;
   error?: string | null;
 }
 
 export default function DatasetPage() {
-  const PAGE_SIZE = 50;
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
-  const [status, setStatus] = useState<DatasetStatus>({ status: "idle" });
-  const [images, setImages] = useState<DatasetImage[]>([]);
-  const [thumbs, setThumbs] = useState<Record<number, string>>({});
-  const [selected, setSelected] = useState<DatasetImage | null>(null);
-  const [page, setPage] = useState(1);
+  const [status, setStatus] = useState<ServerDatasetStatus>({ status: "empty" });
+  const [sequences, setSequences] = useState<SequenceItem[]>([]);
+  const [selected, setSelected] = useState<SequenceItem | null>(null);
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [autolabel, setAutolabel] = useState<AutolabelResult | null>(null);
@@ -58,33 +72,35 @@ export default function DatasetPage() {
     setThumbs({});
   }, []);
 
-  const loadImages = useCallback(async (currentStatus?: DatasetStatus) => {
-    const nextStatus =
-      currentStatus ??
-      (await fetchWithAuth("/api/datasets/collection").then((response) => response.json()));
-    setStatus(nextStatus);
-
-    if (nextStatus.status === "idle" || nextStatus.status === "recording") {
-      clearThumbs();
-      setImages([]);
-      setSelected(null);
-      return;
-    }
-
-    const response = await fetchWithAuth("/api/datasets/collection/images");
-    const payload = (await response.json()) as DatasetImagesResponse;
-    setImages(payload.images ?? []);
-    setSelected((current) => current ?? payload.images?.[0] ?? null);
-    setPage(1);
+  const loadDataset = useCallback(async () => {
+    const response = await fetchWithAuth("/api/datasets/sequences");
+    const payload = (await response.json()) as SequenceResponse;
+    setStatus({
+      status: payload.status,
+      dataset_stage: payload.dataset_stage,
+      dataset_id: payload.dataset_id,
+      session_id: payload.session_id,
+      raw_dir: payload.raw_dir,
+      labeled_dir: payload.labeled_dir,
+      train_dataset_dir: payload.train_dataset_dir,
+      sequence_count: payload.sequence_count ?? payload.count,
+      frame_count: payload.frame_count,
+      rejected_count: payload.rejected_count,
+      class_counts: payload.class_counts,
+      review_pending: payload.review_pending,
+      ready_for_training: payload.ready_for_training,
+    });
+    setSequences(payload.sequences ?? []);
+    setSelected((current) => current ?? payload.sequences?.[0] ?? null);
 
     clearThumbs();
-    const visible = payload.images ?? [];
+    const visible = (payload.sequences ?? []).slice(0, 80);
     const entries = await Promise.all(
-      visible.map(async (image) => {
-        const preview = await fetchWithAuth(`/api/datasets/collection/preview/${image.index}`);
+      visible.map(async (sequence) => {
+        const preview = await fetchWithAuth(`/api/datasets/sequences/${sequence.sequence_id}/preview/0`);
         const url = URL.createObjectURL(await preview.blob());
         objectUrlsRef.current.push(url);
-        return [image.index, url] as const;
+        return [sequence.sequence_id, url] as const;
       }),
     );
     setThumbs(Object.fromEntries(entries));
@@ -92,28 +108,32 @@ export default function DatasetPage() {
 
   useEffect(() => {
     void Promise.resolve()
-      .then(() => loadImages())
+      .then(() => loadDataset())
       .catch((error) => {
         setMessage(error instanceof Error ? error.message : "Cannot load dataset");
       });
     return () => clearThumbs();
-  }, [clearThumbs, loadImages]);
+  }, [clearThumbs, loadDataset]);
 
-  const deleteImage = async (image: DatasetImage) => {
+  const uploadDataset = async (file?: File | null) => {
+    if (!file) return;
     setBusy(true);
     setMessage("");
+    setAutolabel(null);
     try {
-      const response = await fetchWithAuth(`/api/datasets/collection/images/${image.index}`, {
-        method: "DELETE",
+      const data = new FormData();
+      data.append("file", file);
+      await fetchWithAuth("/api/datasets/upload", {
+        method: "POST",
+        body: data,
       });
-      const payload = (await response.json()) as DatasetImagesResponse;
-      setImages(payload.images ?? []);
-      setSelected(payload.images?.[0] ?? null);
-      await loadImages();
+      await loadDataset();
+      setMessage("Raw sequence dataset uploaded and normalized on the server.");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Cannot delete image");
+      setMessage(error instanceof Error ? error.message : "Cannot upload dataset");
     } finally {
       setBusy(false);
+      if (fileRef.current) fileRef.current.value = "";
     }
   };
 
@@ -122,18 +142,11 @@ export default function DatasetPage() {
     setMessage("");
     setAutolabel(null);
     try {
-      const response = await fetchWithAuth("/api/datasets/collection/autolabel", {
-        method: "POST",
-      });
+      const response = await fetchWithAuth("/api/datasets/autolabel", { method: "POST" });
       const result = (await response.json()) as AutolabelResult;
       setAutolabel(result);
-      setMessage(
-        result.error
-          ? `Auto label failed: ${result.error}`
-          : "Auto label finished. Review ERRATIC and UNCERTAIN samples before training.",
-      );
-      const nextStatus = await fetchWithAuth("/api/datasets/collection").then((item) => item.json());
-      setStatus(nextStatus);
+      await loadDataset();
+      setMessage("Server auto-label finished. Review low-confidence, ERRATIC, and disagreement cases before training.");
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Cannot run auto label");
     } finally {
@@ -141,18 +154,18 @@ export default function DatasetPage() {
     }
   };
 
-  const downloadDataset = async () => {
+  const downloadDataset = async (kind: "raw" | "labeled") => {
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetchWithAuth("/api/datasets/collection/download");
+      const response = await fetchWithAuth(`/api/datasets/download?kind=${kind}`);
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
       const disposition = response.headers.get("Content-Disposition") ?? "";
-      const match = disposition.match(/filename="?([^"]+)"?/);
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
       const link = document.createElement("a");
       link.href = url;
-      link.download = match?.[1] ?? "context_aware_dataset.zip";
+      link.download = decodeURIComponent(match?.[1] ?? `context_aware_${kind}_dataset.zip`);
       document.body.appendChild(link);
       link.click();
       link.remove();
@@ -164,24 +177,37 @@ export default function DatasetPage() {
     }
   };
 
-  const totalPages = Math.max(1, Math.ceil(images.length / PAGE_SIZE));
-  const currentPage = Math.min(page, totalPages);
-  const pageStart = (currentPage - 1) * PAGE_SIZE;
-  const pageImages = images.slice(pageStart, pageStart + PAGE_SIZE);
-
-  const canAutolabel = status.status === "stopped" && images.length > 0 && !busy;
-  const canDownload = status.status === "stopped" && Boolean(status.autolabeled) && !busy;
+  const canAutolabel = status.status === "raw_ready" || status.status === "auto_labeled";
+  const classCounts = status.class_counts ?? autolabel?.class_counts ?? {};
+  const reviewPending = status.review_pending ?? autolabel?.review_pending ?? {};
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-800">Dataset</h2>
+          <div className="mt-1 text-sm text-slate-500">Sequence upload, server auto-label, and training handoff</div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".zip,application/zip"
+            className="hidden"
+            onChange={(event) => uploadDataset(event.target.files?.[0])}
+          />
           <button
             type="button"
-            onClick={() => loadImages()}
+            onClick={() => fileRef.current?.click()}
+            disabled={busy}
+            className="inline-flex items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Upload className="h-4 w-4" />
+            Upload zip
+          </button>
+          <button
+            type="button"
+            onClick={() => loadDataset()}
             disabled={busy}
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -191,7 +217,7 @@ export default function DatasetPage() {
           <button
             type="button"
             onClick={runAutolabel}
-            disabled={!canAutolabel}
+            disabled={busy || !canAutolabel}
             className="inline-flex items-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Sparkles className="h-4 w-4" />
@@ -199,8 +225,8 @@ export default function DatasetPage() {
           </button>
           <button
             type="button"
-            onClick={downloadDataset}
-            disabled={!canDownload}
+            onClick={() => downloadDataset(status.status === "auto_labeled" ? "labeled" : "raw")}
+            disabled={busy || status.status === "empty"}
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Download className="h-4 w-4" />
@@ -209,11 +235,12 @@ export default function DatasetPage() {
         </div>
       </div>
 
-      <section className="grid grid-cols-1 gap-3 md:grid-cols-4">
-        <Metric label="Session" value={status.session_id ?? "-"} />
+      <section className="grid grid-cols-1 gap-3 md:grid-cols-5">
+        <Metric label="Dataset" value={status.dataset_id ?? "-"} />
         <Metric label="Status" value={status.status} />
-        <Metric label="Raw Images" value={String(images.length)} />
-        <Metric label="Stage" value={status.dataset_stage ?? (status.saved ? "raw_review" : "-")} />
+        <Metric label="Sequences" value={String(status.sequence_count ?? sequences.length)} />
+        <Metric label="Frames" value={String(status.frame_count ?? "-")} />
+        <Metric label="Rejected" value={String(status.rejected_count ?? 0)} />
       </section>
 
       {message && (
@@ -222,78 +249,70 @@ export default function DatasetPage() {
         </div>
       )}
 
-      {autolabel && (
+      {(autolabel || status.status === "auto_labeled") && (
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-3 flex items-center gap-2 text-sm font-semibold text-slate-800">
             <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-            Auto Label Result
+            Label Summary
           </div>
           <div className="grid grid-cols-1 gap-3 text-sm md:grid-cols-3">
-            <Metric label="Validation" value={String(autolabel.validation_status ?? "-")} />
-            <Metric label="Phase 2 Ready" value={autolabel.ready_for_phase2_training ? "yes" : "no"} />
-            <Metric label="Train Dataset" value={autolabel.train_dataset_dir ?? "-"} />
+            <Metric label="Ready For Training" value={status.ready_for_training ? "yes" : "needs review"} />
+            <Metric label="Train Dataset" value={status.train_dataset_dir ?? autolabel?.train_dataset_dir ?? "-"} />
+            <Metric label="Review Pending" value={formatCounts(reviewPending)} />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {Object.entries(classCounts).map(([label, count]) => (
+              <span key={label} className="rounded-md bg-slate-100 px-2 py-1 text-xs font-medium text-slate-700">
+                {label}: {count}
+              </span>
+            ))}
           </div>
         </section>
       )}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_360px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_380px]">
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
               <Database className="h-4 w-4 text-indigo-600" />
-              Raw ROI Preview
+              Track Sequences
             </div>
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                disabled={currentPage <= 1}
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Prev
-              </button>
-              <span className="text-xs text-slate-600">
-                Page {currentPage}/{totalPages}
-              </span>
-              <button
-                type="button"
-                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
-                disabled={currentPage >= totalPages}
-                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                Next
-              </button>
-              <StatusBadge status={status.status === "stopped" ? "success" : "default"}>
-                {images.length} images
-              </StatusBadge>
-            </div>
+            <StatusBadge status={status.status === "auto_labeled" ? "success" : status.status === "raw_ready" ? "warning" : "default"}>
+              {status.dataset_stage ?? status.status}
+            </StatusBadge>
           </div>
 
-          {images.length === 0 ? (
+          {sequences.length === 0 ? (
             <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-              No saved raw ROI session.
+              No uploaded raw sequence dataset.
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
-              {pageImages.map((image) => (
+              {sequences.map((sequence) => (
                 <button
-                  key={`${image.index}-${image.file}`}
+                  key={sequence.sequence_id}
                   type="button"
-                  onClick={() => setSelected(image)}
+                  onClick={() => setSelected(sequence)}
                   className={`group overflow-hidden rounded-md border bg-slate-50 text-left ${
-                    selected?.index === image.index ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200"
+                    selected?.sequence_id === sequence.sequence_id ? "border-blue-500 ring-2 ring-blue-100" : "border-slate-200"
                   }`}
                 >
-                  {thumbs[image.index] ? (
+                  {thumbs[sequence.sequence_id] ? (
                     <img
-                      src={thumbs[image.index]}
-                      alt={image.file}
+                      src={thumbs[sequence.sequence_id]}
+                      alt={sequence.sequence_id}
                       className="h-28 w-full bg-black object-contain"
                     />
                   ) : (
                     <div className="h-28 w-full bg-slate-200" />
                   )}
-                  <div className="truncate px-2 py-1 text-xs text-slate-600">{image.file}</div>
+                  <div className="space-y-1 px-2 py-2">
+                    <div className="truncate text-xs font-semibold text-slate-800">{sequence.track_id}</div>
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
+                      <span>{sequence.frame_count}f</span>
+                      <span>{sequence.label?.primary_label ?? "RAW"}</span>
+                    </div>
+                  </div>
                 </button>
               ))}
             </div>
@@ -301,36 +320,33 @@ export default function DatasetPage() {
         </section>
 
         <aside className="sticky top-4 h-[calc(100vh-10rem)] overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-slate-800">Selected Image</div>
+          <div className="mb-4 text-sm font-semibold text-slate-800">Selected Sequence</div>
           {selected ? (
             <div className="h-full space-y-4 overflow-y-auto pr-1">
-              {thumbs[selected.index] && (
+              {thumbs[selected.sequence_id] && (
                 <img
-                  src={thumbs[selected.index]}
-                  alt={selected.file}
+                  src={thumbs[selected.sequence_id]}
+                  alt={selected.sequence_id}
                   className="h-56 w-full rounded-md border border-slate-200 bg-black object-contain"
                 />
               )}
               <div className="space-y-2 text-sm">
-                <Detail label="File" value={selected.file} />
-                <Detail label="Frame" value={String(selected.frame_id ?? "-")} />
-                <Detail label="Track" value={String(selected.track_id ?? "-")} />
+                <Detail label="Sequence" value={selected.sequence_id} />
+                <Detail label="Session" value={selected.session_id ?? "-"} />
+                <Detail label="Track" value={selected.track_id ?? "-"} />
+                <Detail label="Frames" value={String(selected.frame_count)} />
+                <Detail label="Depth Valid" value={formatPercent(selected.depth_valid_ratio)} />
+                <Detail label="Label" value={selected.label?.primary_label ?? "RAW"} />
+                <Detail label="Source" value={selected.label?.label_source ?? "-"} />
+                <Detail label="Confidence" value={formatPercent(selected.label?.confidence)} />
+                <Detail label="Review" value={selected.label?.review_status ?? "-"} />
               </div>
-              <button
-                type="button"
-                onClick={() => deleteImage(selected)}
-                disabled={busy || status.status === "recording"}
-                className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete image and metadata
-              </button>
               <pre className="max-h-72 overflow-auto rounded-md bg-slate-950 p-3 text-xs text-slate-100">
-                {JSON.stringify(selected.metadata, null, 2)}
+                {JSON.stringify(selected.label ?? selected.metadata, null, 2)}
               </pre>
             </div>
           ) : (
-            <div className="text-sm text-slate-500">Select an image to inspect metadata.</div>
+            <div className="text-sm text-slate-500">Select a sequence to inspect metadata.</div>
           )}
         </aside>
       </div>
@@ -354,4 +370,13 @@ function Detail({ label, value }: { label: string; value: string }) {
       <span className="truncate font-medium text-slate-900">{value}</span>
     </div>
   );
+}
+
+function formatPercent(value?: number) {
+  return typeof value === "number" && Number.isFinite(value) ? `${Math.round(value * 100)}%` : "-";
+}
+
+function formatCounts(values: Record<string, number>) {
+  const entries = Object.entries(values).filter(([, count]) => count > 0);
+  return entries.length ? entries.map(([label, count]) => `${label}:${count}`).join(", ") : "0";
 }
