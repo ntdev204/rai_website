@@ -41,11 +41,13 @@ interface AutolabelResult {
 }
 
 export default function DatasetPage() {
+  const PAGE_SIZE = 50;
   const objectUrlsRef = useRef<string[]>([]);
   const [status, setStatus] = useState<DatasetStatus>({ status: "idle" });
   const [images, setImages] = useState<DatasetImage[]>([]);
   const [thumbs, setThumbs] = useState<Record<number, string>>({});
   const [selected, setSelected] = useState<DatasetImage | null>(null);
+  const [page, setPage] = useState(1);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [autolabel, setAutolabel] = useState<AutolabelResult | null>(null);
@@ -73,9 +75,10 @@ export default function DatasetPage() {
     const payload = (await response.json()) as DatasetImagesResponse;
     setImages(payload.images ?? []);
     setSelected((current) => current ?? payload.images?.[0] ?? null);
+    setPage(1);
 
     clearThumbs();
-    const visible = (payload.images ?? []).slice(0, 200);
+    const visible = payload.images ?? [];
     const entries = await Promise.all(
       visible.map(async (image) => {
         const preview = await fetchWithAuth(`/api/datasets/collection/preview/${image.index}`);
@@ -161,6 +164,11 @@ export default function DatasetPage() {
     }
   };
 
+  const totalPages = Math.max(1, Math.ceil(images.length / PAGE_SIZE));
+  const currentPage = Math.min(page, totalPages);
+  const pageStart = (currentPage - 1) * PAGE_SIZE;
+  const pageImages = images.slice(pageStart, pageStart + PAGE_SIZE);
+
   const canAutolabel = status.status === "stopped" && images.length > 0 && !busy;
   const canDownload = status.status === "stopped" && Boolean(status.autolabeled) && !busy;
 
@@ -235,9 +243,30 @@ export default function DatasetPage() {
               <Database className="h-4 w-4 text-indigo-600" />
               Raw ROI Preview
             </div>
-            <StatusBadge status={status.status === "stopped" ? "success" : "default"}>
-              {images.length} images
-            </StatusBadge>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
+                disabled={currentPage <= 1}
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Prev
+              </button>
+              <span className="text-xs text-slate-600">
+                Page {currentPage}/{totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
+                disabled={currentPage >= totalPages}
+                className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Next
+              </button>
+              <StatusBadge status={status.status === "stopped" ? "success" : "default"}>
+                {images.length} images
+              </StatusBadge>
+            </div>
           </div>
 
           {images.length === 0 ? (
@@ -246,7 +275,7 @@ export default function DatasetPage() {
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
-              {images.map((image) => (
+              {pageImages.map((image) => (
                 <button
                   key={`${image.index}-${image.file}`}
                   type="button"
@@ -259,10 +288,10 @@ export default function DatasetPage() {
                     <img
                       src={thumbs[image.index]}
                       alt={image.file}
-                      className="aspect-video w-full bg-black object-cover"
+                      className="h-28 w-full bg-black object-contain"
                     />
                   ) : (
-                    <div className="aspect-video w-full bg-slate-200" />
+                    <div className="h-28 w-full bg-slate-200" />
                   )}
                   <div className="truncate px-2 py-1 text-xs text-slate-600">{image.file}</div>
                 </button>
@@ -271,15 +300,15 @@ export default function DatasetPage() {
           )}
         </section>
 
-        <aside className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <aside className="sticky top-4 h-[calc(100vh-10rem)] overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 text-sm font-semibold text-slate-800">Selected Image</div>
           {selected ? (
-            <div className="space-y-4">
+            <div className="h-full space-y-4 overflow-y-auto pr-1">
               {thumbs[selected.index] && (
                 <img
                   src={thumbs[selected.index]}
                   alt={selected.file}
-                  className="aspect-video w-full rounded-md border border-slate-200 bg-black object-cover"
+                  className="h-56 w-full rounded-md border border-slate-200 bg-black object-contain"
                 />
               )}
               <div className="space-y-2 text-sm">
