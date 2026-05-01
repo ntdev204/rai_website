@@ -42,8 +42,13 @@ services:
       FACE_DATA_DIR: /app/data/faces
       FACE_MIN_IMAGES: ${FACE_MIN_IMAGES:-8}
       FACE_MAX_IMAGES: ${FACE_MAX_IMAGES:-20}
+      DATASET_DATA_DIR: /app/data/datasets
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+      OLLAMA_VLM_MODEL: ${OLLAMA_VLM_MODEL:-}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-llama3.1}
     volumes:
       - face-data:/app/data/faces
+      - dataset-data:/app/data/datasets
     ports:
       - "8000:8000"
     extra_hosts:
@@ -66,3 +71,4 @@ name: rai_website
 volumes:
   pgdata:
   face-data:
+  dataset-data:

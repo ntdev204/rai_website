@@ -28,6 +28,10 @@ interface TrainingConfig {
   distill_from?: string | null;
 }
 
+interface TrainingDefaults extends Partial<TrainingConfig> {
+  dataset_source?: string;
+}
+
 interface TrainingMetric {
   epoch?: number;
   lr?: number;
@@ -107,7 +111,12 @@ export default function TrainingPage() {
           fetchWithAuth("/api/training/status"),
         ]);
         if (cancelled) return;
-        setConfig({ ...fallbackConfig, ...(await defaultsRes.json()) });
+        const defaults = (await defaultsRes.json()) as TrainingDefaults;
+        setConfig({
+          ...fallbackConfig,
+          ...defaults,
+          dataset: defaults.dataset_source === "server_labeled_dataset" ? "latest" : defaults.dataset ?? fallbackConfig.dataset,
+        });
         setStatus(await statusRes.json());
       } catch (error) {
         if (!cancelled) setMessage(error instanceof Error ? error.message : "Cannot load training API");

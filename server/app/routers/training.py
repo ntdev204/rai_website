@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.middleware.auth import get_current_operator
-from app.services import training_proxy
+from app.services import dataset_store, training_proxy
 
 router = APIRouter(
     prefix="/api/training",
@@ -42,6 +42,10 @@ class TrainingStartRequest(BaseModel):
 async def defaults() -> dict[str, Any]:
     result = await training_proxy.training_defaults()
     _raise_proxy_error(result)
+    labeled_dataset = dataset_store.active_labeled_dataset_path()
+    if labeled_dataset:
+        result["dataset"] = labeled_dataset
+        result["dataset_source"] = "server_labeled_dataset"
     return result
 
 
@@ -54,7 +58,13 @@ async def status() -> dict[str, Any]:
 
 @router.post("/start")
 async def start(body: TrainingStartRequest) -> dict[str, Any]:
-    result = await training_proxy.training_start(body.model_dump())
+    payload = body.model_dump()
+    labeled_dataset = dataset_store.active_labeled_dataset_path()
+    if labeled_dataset and (not payload.get("dataset") or payload["dataset"] in {"auto", "latest"} or payload["dataset"] == labeled_dataset):
+        imported = await training_proxy.import_dataset(labeled_dataset)
+        _raise_proxy_error(imported)
+        payload["dataset"] = imported["dataset"]
+    result = await training_proxy.training_start(payload)
     _raise_proxy_error(result)
     return result
 
