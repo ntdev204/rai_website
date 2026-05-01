@@ -12,6 +12,7 @@ interface DetectionItem {
   class_name: string;
   confidence: number;
   distance?: number;
+  distance_source?: string;
   intent_name?: string;
   intent_confidence?: number;
 }
@@ -337,7 +338,7 @@ function DetectionTable({
                   <td className="py-2 pr-3 font-mono">{row.track_id}</td>
                   <td className="py-2 pr-3">{row.class_name}</td>
                   <td className="py-2 pr-3">{formatPercent(row.confidence)}</td>
-                  <td className="py-2 pr-3">{typeof row.distance === "number" ? `${row.distance.toFixed(2)}m` : "-"}</td>
+                  <td className="py-2 pr-3">{formatDistance(row.distance, row.distance_source)}</td>
                   <td className="py-2 pr-3">{row.intent_name ?? "-"}</td>
                 </tr>
               ))
@@ -367,4 +368,10 @@ function formatBytes(value: number) {
 function formatDatasetMode(mode?: string | null) {
   if (mode === "rl") return "RL";
   return "Intent CNN";
+}
+
+function formatDistance(distance?: number, source?: string) {
+  if (source !== "depth") return "N/A";
+  if (typeof distance !== "number" || !Number.isFinite(distance)) return "N/A";
+  return `${distance.toFixed(2)}m`;
 }
