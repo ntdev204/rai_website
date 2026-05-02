@@ -35,6 +35,14 @@ class Settings(BaseSettings):
     OLLAMA_URL: str = "http://host.docker.internal:11434"
     OLLAMA_VLM_MODEL: str = ""
     OLLAMA_LLM_MODEL: str = "llama3.1"
+    SSH_ENABLED: bool = False
+    SSH_JETSON_HOST: str = ""
+    SSH_JETSON_PORT: int = 22
+    SSH_JETSON_USER: str = ""
+    SSH_RASPI_HOST: str = ""
+    SSH_RASPI_PORT: int = 22
+    SSH_RASPI_USER: str = ""
+    SSH_CONNECT_TIMEOUT_SEC: float = 10.0
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
