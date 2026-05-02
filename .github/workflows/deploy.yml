@@ -118,6 +118,15 @@ jobs:
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml run --rm server alembic upgrade head
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+
+            # ── Auto-restore SSL config if cert already exists ──
+            # deploy workflow SCPs default.conf (HTTP-only) from repo,
+            # so we swap it back to SSL if certs are present.
+            if docker compose -f docker-compose.prod.yml run --rm certbot certificates 2>&1 | grep -q "rai-k63.me"; then
+              echo "[SSL] Cert found — restoring HTTPS config..."
+              cp nginx/conf.d/default-ssl.conf.template nginx/conf.d/default.conf
+            fi
+
             docker compose -f docker-compose.prod.yml exec nginx nginx -s reload || true
             docker compose -f docker-compose.prod.yml ps
             if ! (
