@@ -119,5 +119,6 @@ jobs:
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker compose -f docker-compose.prod.yml ps
-            curl --fail --retry 10 --retry-delay 3 http://127.0.0.1:8000/health
+            sleep 10
+            curl --fail --retry 20 --retry-all-errors --retry-delay 5 http://127.0.0.1:8000/health
             docker image prune -f
