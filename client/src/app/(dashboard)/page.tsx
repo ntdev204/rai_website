@@ -13,6 +13,11 @@ interface RobotTelemetry {
   pos_x?: number | null;
   pos_y?: number | null;
   yaw?: number | null;
+  map_pose?: {
+    x?: number | null;
+    y?: number | null;
+    yaw?: number | null;
+  } | null;
 }
 
 interface AiMetrics {
@@ -62,6 +67,11 @@ export default function Dashboard() {
   const robot = telemetry.robot ?? {};
   const ai = telemetry.ai ?? {};
   const robotOnline = isConnected && robot.connected !== false;
+  const robotPose = {
+    x: robot.map_pose?.x ?? robot.pos_x ?? null,
+    y: robot.map_pose?.y ?? robot.pos_y ?? null,
+    yaw: robot.map_pose?.yaw ?? robot.yaw ?? null,
+  };
 
   return (
     <div className="space-y-6">
@@ -110,15 +120,15 @@ export default function Dashboard() {
               <div className="grid grid-cols-3 gap-6 text-center">
                 <div>
                   <p className="text-xs uppercase text-slate-400 font-semibold">X</p>
-                  <p className="text-2xl font-bold text-slate-800">{formatNumber(robot.pos_x, 3)}</p>
+                  <p className="text-2xl font-bold text-slate-800">{formatNumber(robotPose.x, 3)}</p>
                 </div>
                 <div>
                   <p className="text-xs uppercase text-slate-400 font-semibold">Y</p>
-                  <p className="text-2xl font-bold text-slate-800">{formatNumber(robot.pos_y, 3)}</p>
+                  <p className="text-2xl font-bold text-slate-800">{formatNumber(robotPose.y, 3)}</p>
                 </div>
                 <div>
                   <p className="text-xs uppercase text-slate-400 font-semibold">Yaw</p>
-                  <p className="text-2xl font-bold text-slate-800">{formatNumber(robot.yaw, 3)}</p>
+                  <p className="text-2xl font-bold text-slate-800">{formatNumber(robotPose.yaw, 3)}</p>
                 </div>
               </div>
             ) : (
