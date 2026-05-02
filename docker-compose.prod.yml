@@ -46,6 +46,14 @@ services:
       OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_VLM_MODEL: ${OLLAMA_VLM_MODEL:-}
       OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-llama3.1}
+      SSH_ENABLED: ${SSH_ENABLED:-false}
+      SSH_JETSON_HOST: ${SSH_JETSON_HOST:-}
+      SSH_JETSON_PORT: ${SSH_JETSON_PORT:-22}
+      SSH_JETSON_USER: ${SSH_JETSON_USER:-}
+      SSH_RASPI_HOST: ${SSH_RASPI_HOST:-}
+      SSH_RASPI_PORT: ${SSH_RASPI_PORT:-22}
+      SSH_RASPI_USER: ${SSH_RASPI_USER:-}
+      SSH_CONNECT_TIMEOUT_SEC: ${SSH_CONNECT_TIMEOUT_SEC:-10}
     volumes:
       - face-data:/app/data/faces
       - dataset-data:/app/data/datasets
