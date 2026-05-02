@@ -57,6 +57,7 @@ services:
     volumes:
       - face-data:/app/data/faces
       - dataset-data:/app/data/datasets
+      - /home/rai/.ssh:/root/.ssh:ro
     ports:
       - "8000:8000"
     extra_hosts:
