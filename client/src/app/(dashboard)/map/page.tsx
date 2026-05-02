@@ -61,6 +61,9 @@ interface RobotTelemetry {
   navigation_mode?: string | null;
   map_info?: MapInfo | null;
   map_pose?: RobotPose | null;
+  pos_x?: number | null;
+  pos_y?: number | null;
+  yaw?: number | null;
   plan?: Point2D[];
   local_plan?: Point2D[];
 }
@@ -529,7 +532,19 @@ export default function MapPage() {
     }
   }
 
-  const robotPose = telemetry?.map_pose;
+  const robotPose =
+    telemetry?.map_pose && Number.isFinite(telemetry.map_pose.x) && Number.isFinite(telemetry.map_pose.y)
+      ? telemetry.map_pose
+      : telemetry?.pos_x !== null &&
+          telemetry?.pos_x !== undefined &&
+          telemetry?.pos_y !== null &&
+          telemetry?.pos_y !== undefined
+        ? {
+            x: telemetry.pos_x,
+            y: telemetry.pos_y,
+            yaw: telemetry.yaw ?? 0,
+          }
+        : null;
   const remoteMode = telemetry?.navigation_mode;
   const robotMode = remoteMode?.toLowerCase();
   const slamScanReady = mode === "slam" && (slamStarted || robotMode === "slam");
