@@ -119,6 +119,13 @@ jobs:
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
             docker compose -f docker-compose.prod.yml ps
-            sleep 10
-            curl --fail --retry 20 --retry-all-errors --retry-delay 5 http://127.0.0.1:8000/health
+            if ! (
+              sleep 10
+              curl --fail --retry 20 --retry-all-errors --retry-delay 5 http://127.0.0.1:8000/health
+            ); then
+              docker compose -f docker-compose.prod.yml ps
+              docker compose -f docker-compose.prod.yml logs --tail=200 server
+              docker compose -f docker-compose.prod.yml logs --tail=100 postgres
+              exit 1
+            fi
             docker image prune -f
