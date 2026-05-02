@@ -4,6 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, CornerDownLeft, Trash2 } from "lucide-react";
 
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { useAuth } from "@/contexts/AuthContext";
 import { useWebSocket } from "@/hooks/useWebSocket";
 
@@ -114,21 +121,25 @@ export default function TerminalPage() {
         </div>
         <div className="flex items-center gap-3">
           <StatusBadge status={connectionStatus}>{connectionLabel}</StatusBadge>
-          <select
+          <Select
             value={target}
-            onChange={(event) => {
+            onValueChange={(value) => {
               setMessages([]);
               nextIdRef.current = 1;
-              setTarget(event.target.value as "jetson" | "raspi");
+              setTarget(value as "jetson" | "raspi");
             }}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm"
           >
-            {TARGETS.map((item) => (
-              <option key={item.value} value={item.value}>
-                {item.label}
-              </option>
-            ))}
-          </select>
+            <SelectTrigger className="w-[140px] rounded-lg border-slate-300 bg-white text-slate-700 shadow-sm">
+              <SelectValue placeholder="Select target" />
+            </SelectTrigger>
+            <SelectContent>
+              {TARGETS.map((item) => (
+                <SelectItem key={item.value} value={item.value}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <button
             type="button"
             onClick={() => setMessages([])}
