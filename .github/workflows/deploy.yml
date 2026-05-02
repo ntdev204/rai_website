@@ -83,6 +83,9 @@ jobs:
     needs: build-and-push
     environment: production
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Set lower-case owner
         id: owner
         run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
