@@ -33,6 +33,7 @@ services:
       ZMQ_TELEMETRY_PORT: ${ZMQ_TELEMETRY_PORT:-5556}
       ZMQ_CAMERA_PORT: ${ZMQ_CAMERA_PORT:-5557}
       JETSON_API_URL: ${JETSON_API_URL}
+      TRAINING_API_URL: ${TRAINING_API_URL}
       ANALYTICS_COLLECT_INTERVAL_SEC: ${ANALYTICS_COLLECT_INTERVAL_SEC:-5}
       ANALYTICS_RETENTION_HOURS: ${ANALYTICS_RETENTION_HOURS:-168}
       WEBSITE_LOG_BUFFER_SIZE: ${WEBSITE_LOG_BUFFER_SIZE:-500}
@@ -41,8 +42,21 @@ services:
       FACE_DATA_DIR: /app/data/faces
       FACE_MIN_IMAGES: ${FACE_MIN_IMAGES:-8}
       FACE_MAX_IMAGES: ${FACE_MAX_IMAGES:-20}
+      DATASET_DATA_DIR: /app/data/datasets
+      OLLAMA_URL: ${OLLAMA_URL}
+      OLLAMA_VLM_MODEL: ${OLLAMA_VLM_MODEL:-}
+      OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-llama3.1}
+      SSH_ENABLED: ${SSH_ENABLED:-false}
+      SSH_JETSON_HOST: ${SSH_JETSON_HOST:-}
+      SSH_JETSON_PORT: ${SSH_JETSON_PORT:-22}
+      SSH_JETSON_USER: ${SSH_JETSON_USER:-}
+      SSH_RASPI_HOST: ${SSH_RASPI_HOST:-}
+      SSH_RASPI_PORT: ${SSH_RASPI_PORT:-22}
+      SSH_RASPI_USER: ${SSH_RASPI_USER:-}
+      SSH_CONNECT_TIMEOUT_SEC: ${SSH_CONNECT_TIMEOUT_SEC:-10}
     volumes:
       - face-data:/app/data/faces
+      - dataset-data:/app/data/datasets
     ports:
       - "8000:8000"
 
@@ -63,3 +77,4 @@ name: rai_website
 volumes:
   pgdata:
   face-data:
+  dataset-data:
