@@ -1,16 +1,19 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, Video, Map, Settings, PlaySquare, FileText, BarChart3, Activity } from "lucide-react";
+import { LayoutDashboard, Video, Map, Settings, PlaySquare, FileText, BarChart3, Activity, Database, BrainCircuit, TerminalSquare } from "lucide-react";
 
 const NAV_ITEMS = [
   { name: "Dashboard", href: "/", icon: LayoutDashboard },
   { name: "Monitor", href: "/monitor", icon: Video },
+  { name: "Dataset", href: "/dataset", icon: Database },
+  { name: "Training", href: "/training", icon: BrainCircuit },
   { name: "Map", href: "/map", icon: Map },
   { name: "Control", href: "/control", icon: PlaySquare },
   { name: "Nodes", href: "/nodes", icon: Activity },
   { name: "Patrol", href: "/patrol", icon: Map },
   { name: "Analytics", href: "/analytics", icon: BarChart3 },
+  { name: "Terminal", href: "/terminal", icon: TerminalSquare },
   { name: "Logs", href: "/logs", icon: FileText },
   { name: "Settings", href: "/settings", icon: Settings },
 ];

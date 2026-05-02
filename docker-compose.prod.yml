@@ -33,7 +33,7 @@ services:
       ZMQ_TELEMETRY_PORT: ${ZMQ_TELEMETRY_PORT:-5556}
       ZMQ_CAMERA_PORT: ${ZMQ_CAMERA_PORT:-5557}
       JETSON_API_URL: ${JETSON_API_URL}
-      TRAINING_API_URL: ${TRAINING_API_URL}
+      TRAINING_API_URL: ${TRAINING_API_URL:-http://host.docker.internal:8081}
       ANALYTICS_COLLECT_INTERVAL_SEC: ${ANALYTICS_COLLECT_INTERVAL_SEC:-5}
       ANALYTICS_RETENTION_HOURS: ${ANALYTICS_RETENTION_HOURS:-168}
       WEBSITE_LOG_BUFFER_SIZE: ${WEBSITE_LOG_BUFFER_SIZE:-500}
@@ -43,7 +43,7 @@ services:
       FACE_MIN_IMAGES: ${FACE_MIN_IMAGES:-8}
       FACE_MAX_IMAGES: ${FACE_MAX_IMAGES:-20}
       DATASET_DATA_DIR: /app/data/datasets
-      OLLAMA_URL: ${OLLAMA_URL}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
       OLLAMA_VLM_MODEL: ${OLLAMA_VLM_MODEL:-}
       OLLAMA_LLM_MODEL: ${OLLAMA_LLM_MODEL:-llama3.1}
       SSH_ENABLED: ${SSH_ENABLED:-false}
@@ -59,6 +59,8 @@ services:
       - dataset-data:/app/data/datasets
     ports:
       - "8000:8000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
 
   client:
     image: ${CLIENT_IMAGE}:${IMAGE_TAG:-latest}

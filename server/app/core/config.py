@@ -22,6 +22,7 @@ class Settings(BaseSettings):
     ZMQ_CAMERA_PORT: int = 5557
     
     JETSON_API_URL: str = "http://25.12.4.100:8080"
+    TRAINING_API_URL: str = "http://localhost:8081"
     ANALYTICS_COLLECT_INTERVAL_SEC: float = 5.0
     ANALYTICS_RETENTION_HOURS: int = 168
     WEBSITE_LOG_BUFFER_SIZE: int = 500
@@ -30,6 +31,18 @@ class Settings(BaseSettings):
     FACE_DATA_DIR: str = "/app/data/faces"
     FACE_MIN_IMAGES: int = 8
     FACE_MAX_IMAGES: int = 20
+    DATASET_DATA_DIR: str = "/app/data/datasets"
+    OLLAMA_URL: str = "http://host.docker.internal:11434"
+    OLLAMA_VLM_MODEL: str = ""
+    OLLAMA_LLM_MODEL: str = "llama3.1"
+    SSH_ENABLED: bool = False
+    SSH_JETSON_HOST: str = ""
+    SSH_JETSON_PORT: int = 22
+    SSH_JETSON_USER: str = ""
+    SSH_RASPI_HOST: str = ""
+    SSH_RASPI_PORT: int = 22
+    SSH_RASPI_USER: str = ""
+    SSH_CONNECT_TIMEOUT_SEC: float = 10.0
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
