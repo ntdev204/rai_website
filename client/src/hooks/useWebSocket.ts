@@ -3,7 +3,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getValidAccessToken } from "@/lib/api";
 
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || "ws://localhost:8000";
+function getWebSocketBaseUrl() {
+  if (process.env.NEXT_PUBLIC_WS_URL) return process.env.NEXT_PUBLIC_WS_URL;
+  if (typeof window !== "undefined") {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    return `${protocol}//${window.location.hostname}:8000`;
+  }
+  return "ws://localhost:8000";
+}
+
+const WS_URL = getWebSocketBaseUrl();
 
 interface UseWebSocketOptions {
   binaryType?: "blob" | "arraybuffer";
