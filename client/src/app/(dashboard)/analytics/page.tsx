@@ -23,6 +23,9 @@ interface Snapshot {
   navigation_mode?: string | null;
   voltage?: number | null;
   battery_percent?: number | null;
+  pos_x?: number | null;
+  pos_y?: number | null;
+  yaw?: number | null;
   speed?: number | null;
   ai_mode?: string | null;
   ai_fps?: number | null;
@@ -148,6 +151,20 @@ export default function AnalyticsPage() {
           trend={windowStats?.max_speed ? { value: `max ${windowStats.max_speed.toFixed(1)}`, isPositive: true } : undefined}
         />
         <MetricCard
+          title="Robot Position"
+          value={
+            current?.pos_x !== null && current?.pos_x !== undefined && current?.pos_y !== null && current?.pos_y !== undefined
+              ? `${current.pos_x.toFixed(2)}, ${current.pos_y.toFixed(2)}`
+              : "-"
+          }
+          icon={<Activity className="w-5 h-5" />}
+          trend={
+            current?.yaw !== null && current?.yaw !== undefined
+              ? { value: `yaw ${current.yaw.toFixed(2)}`, isPositive: true }
+              : undefined
+          }
+        />
+        <MetricCard
           title="AI Detections"
           value={(windowStats?.person_observations ?? 0) + (windowStats?.obstacle_observations ?? 0)}
           icon={<Users className="w-5 h-5" />}
@@ -220,6 +237,14 @@ export default function AnalyticsPage() {
             <div className="rounded-lg border border-slate-200 p-4">
               <div className="text-slate-500">Mode</div>
               <div className="mt-1 text-2xl font-bold text-slate-900">{current?.navigation_mode ?? "-"}</div>
+            </div>
+            <div className="rounded-lg border border-slate-200 p-4">
+              <div className="text-slate-500">Current X</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{formatNumber(current?.pos_x, " m")}</div>
+            </div>
+            <div className="rounded-lg border border-slate-200 p-4">
+              <div className="text-slate-500">Current Y</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">{formatNumber(current?.pos_y, " m")}</div>
             </div>
           </div>
         </div>
