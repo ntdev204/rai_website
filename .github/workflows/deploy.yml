@@ -5,7 +5,10 @@ on:
   push:
     branches:
       - main
-      - master
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -80,8 +83,9 @@ jobs:
     needs: build-and-push
     environment: production
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Set lower-case owner
+        id: owner
+        run: echo "value=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_OUTPUT"
 
       - name: Copy deployment bundle
         uses: appleboy/scp-action@v0.1.7
@@ -96,8 +100,8 @@ jobs:
       - name: Deploy over SSH
         uses: appleboy/ssh-action@v1.0.3
         env:
-          SERVER_IMAGE: ghcr.io/${{ github.repository_owner }}/rai-website-server
-          CLIENT_IMAGE: ghcr.io/${{ github.repository_owner }}/rai-website-client
+          SERVER_IMAGE: ghcr.io/${{ steps.owner.outputs.value }}/rai-website-server
+          CLIENT_IMAGE: ghcr.io/${{ steps.owner.outputs.value }}/rai-website-client
           IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
         with:
           host: ${{ secrets.PROD_HOST }}
@@ -107,8 +111,10 @@ jobs:
           script: |
             set -eu
             cd "${{ secrets.PROD_PATH }}"
-            echo "${{ secrets.PROD_ENV_FILE }}" > .env
-            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ github.repository_owner }}" --password-stdin
+            printf '%s' '${{ secrets.PROD_ENV_FILE }}' > .env
+            echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ steps.owner.outputs.value }}" --password-stdin
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml up -d --remove-orphans
+            docker compose -f docker-compose.prod.yml ps
+            curl --fail --retry 10 --retry-delay 3 http://127.0.0.1:8000/health
             docker image prune -f
