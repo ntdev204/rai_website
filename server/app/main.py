@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.routers import analytics, auth, configs, datasets, logs, maps, nodes, patrol, robot, training, users
-from app.routers import ws_control, ws_telemetry, ws_video
+from app.routers import ws_control, ws_ssh, ws_telemetry, ws_video
 from app.core.seed import seed_admin
 from app.services.analytics_service import start_analytics_collector, stop_analytics_collector
 from app.services.log_service import log_event
@@ -65,6 +65,7 @@ app.include_router(training.router)
 
 # WebSocket routers
 app.include_router(ws_control.router)
+app.include_router(ws_ssh.router)
 app.include_router(ws_telemetry.router)
 app.include_router(ws_video.router)
 
