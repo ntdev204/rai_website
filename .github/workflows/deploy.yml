@@ -114,6 +114,9 @@ jobs:
             set -eu
             cd "${{ secrets.PROD_PATH }}"
             printf '%s' '${{ secrets.PROD_ENV_FILE }}' > .env
+            if [ -f /etc/letsencrypt/live/rai-k63.me/fullchain.pem ] || [ -f ./nginx/certbot-certs/live/rai-k63.me/fullchain.pem ]; then
+              cp nginx/conf.d/default-ssl.conf.template nginx/conf.d/default.conf
+            fi
             echo "${{ secrets.GHCR_PAT }}" | docker login ghcr.io -u "${{ steps.owner.outputs.value }}" --password-stdin
             docker compose -f docker-compose.prod.yml pull
             docker compose -f docker-compose.prod.yml run --rm server alembic upgrade head
