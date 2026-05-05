@@ -26,6 +26,23 @@ interface ExperimentTrial {
   intent_accuracy?: number;
   ai_fps_avg?: number;
   success_rate?: number;
+  success_count?: number;
+  total_count?: number;
+  detector_latency_avg_ms?: number;
+  detector_latency_p95_ms?: number;
+  detector_rate?: number;
+  detector_fp_rate?: number;
+  tracker_id_switch_rate?: number;
+  tracker_loss_rate?: number;
+  intent_ece?: number;
+  intent_uncertain_rate?: number;
+  intent_latency_avg_ms?: number;
+  intent_latency_p95_ms?: number;
+  dataset_total_samples?: number;
+  dataset_min_class_count?: number;
+  dataset_duplicate_rate?: number;
+  dataset_corrupt_rate?: number;
+  dataset_pending_review_rate?: number;
   created_at: string;
 }
 
