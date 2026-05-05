@@ -50,13 +50,17 @@ async def start_zmq_bridge() -> None:
     _tel_sock = _ctx.socket(zmq.SUB)
     _tel_sock.setsockopt(zmq.RCVHWM, 2)
     _tel_sock.setsockopt(zmq.LINGER, 0)
+    _tel_sock.setsockopt(zmq.TCP_KEEPALIVE, 1)
+    _tel_sock.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
     _tel_sock.setsockopt_string(zmq.SUBSCRIBE, "")
     _tel_sock.connect(f"tcp://{_active_scada_host}:{settings.ZMQ_TELEMETRY_PORT}")
 
     _map_sock = _ctx.socket(zmq.SUB)
     _map_sock.setsockopt(zmq.RCVHWM, 2)
     _map_sock.setsockopt(zmq.LINGER, 0)
-    _map_sock.setsockopt(zmq.SUBSCRIBE, b"MAP:")
+    _map_sock.setsockopt(zmq.TCP_KEEPALIVE, 1)
+    _map_sock.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
+    _map_sock.setsockopt_string(zmq.SUBSCRIBE, "MAP:")
     _map_sock.connect(f"tcp://{_active_scada_host}:{settings.ZMQ_CAMERA_PORT}")
 
     _bridge_running = True
@@ -135,7 +139,7 @@ async def send_teleop_cmd(linear_x: float, linear_y: float, angular_z: float) ->
 
 
 async def _telemetry_recv_loop() -> None:
-    global _latest_telemetry
+    global _latest_telemetry, _tel_sock
     last_received = time.monotonic()
 
     while _bridge_running:
@@ -149,9 +153,25 @@ async def _telemetry_recv_loop() -> None:
                 _latest_telemetry = telemetry
             last_received = time.monotonic()
         except asyncio.TimeoutError:
-            if time.monotonic() - last_received > 1.5:
+            now = time.monotonic()
+            if now - last_received > 1.5:
                 async with _telemetry_lock:
                     _latest_telemetry = {"connected": False}
+            
+            # Recreate socket if dead for 10 seconds (handles Tailscale/NAT drops)
+            if now - last_received > 10.0:
+                logger.warning("Telemetry SUB socket dead for 10s, recreating...")
+                if _tel_sock:
+                    _tel_sock.close()
+                _tel_sock = _ctx.socket(zmq.SUB)
+                _tel_sock.setsockopt(zmq.RCVHWM, 2)
+                _tel_sock.setsockopt(zmq.LINGER, 0)
+                _tel_sock.setsockopt(zmq.TCP_KEEPALIVE, 1)
+                _tel_sock.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
+                _tel_sock.setsockopt_string(zmq.SUBSCRIBE, "")
+                _tel_sock.connect(f"tcp://{_active_scada_host}:{settings.ZMQ_TELEMETRY_PORT}")
+                last_received = now  # Reset to prevent continuous recreation
+
         except asyncio.CancelledError:
             break
         except Exception as exc:
