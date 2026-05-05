@@ -213,7 +213,7 @@ function ExperimentPanel({ trials, total, loading, download }: {
             <Activity className="w-5 h-5 text-white" />
           </div>
           <div>
-            <h3 className="text-base font-bold text-slate-800">Kết quả Thực nghiệm §6.3</h3>
+            <h3 className="text-base font-bold text-slate-800">Kết quả Thực nghiệm (Offline & Online)</h3>
             <p className="text-xs text-slate-500 mt-0.5">
               {total} trial{total !== 1 ? "s" : ""} recorded · Offline + Online
             </p>
@@ -304,7 +304,7 @@ function ControlSection({ summary, series, trials, loading, onDownload }: {
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Gauge} title="6.2.1 · Điều khiển và Chuyển động"
+      <SectionHeader icon={Gauge} title="Điều khiển và Chuyển động"
         subtitle="velocity error · serial stability · odometry · stop distance · Nav2 goal"
         accent="bg-blue-500"
         onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
@@ -370,7 +370,7 @@ function PerceptionSection({ summary, series, trials, loading, onDownload }: {
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Brain} title="6.2.2 · Perception và AI"
+      <SectionHeader icon={Brain} title="Perception và AI"
         subtitle="YOLO latency · ID switch · Temporal Intent CNN · accuracy 5 cls · ECE · UNCERTAIN · throughput"
         accent="bg-violet-500"
         onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
@@ -431,7 +431,7 @@ function DatasetSection({ trials, loading, onDownload }: {
   ];
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Database} title="6.2.3 · Dataset"
+      <SectionHeader icon={Database} title="Dataset"
         subtitle="ROI · track hợp lệ · phân phối lớp · duplicate / corrupt · pending review · trainable"
         accent="bg-emerald-500"
         onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
@@ -473,7 +473,7 @@ function SafetySection({ summary, loading, onDownload }: {
   const alerts = summary?.logs.recent_alerts ?? [];
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Shield} title="6.2.4 · Safety và Degrade"
+      <SectionHeader icon={Shield} title="Safety và Degrade"
         subtitle="phản ứng theo scenario · latency · success rate · recent alerts"
         accent="bg-rose-500"
         onDownload={() => void onDownload("/api/experiments/export/online", "online_eval.csv")}
@@ -573,9 +573,9 @@ export default function AnalyticsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Analytics — §6.2</h2>
+          <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Analytics Dashboard</h2>
           <p className="text-sm text-slate-500 mt-1">
-            Chỉ số thực nghiệm · §6.2.1 Điều khiển · §6.2.2 Perception · §6.2.3 Dataset · §6.2.4 Safety
+            Chỉ số thực nghiệm · Điều khiển · Perception · Dataset · Safety
           </p>
         </div>
         <div className="flex items-center gap-3">
