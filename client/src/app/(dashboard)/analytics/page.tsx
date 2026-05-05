@@ -3,13 +3,33 @@
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { fetchWithAuth } from "@/lib/api";
 import {
-  Activity, AlertTriangle, Brain, Database, Gauge, RefreshCw, Shield,
+  Activity, AlertTriangle, Brain, CheckCircle, ChevronDown,
+  Database, Download, Gauge, RefreshCw, Shield, XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   CartesianGrid, Line, LineChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
+
+// ── Types ──────────────────────────────────────────────────────────────────────
+interface ExperimentTrial {
+  id: number;
+  scenario: string;
+  phase: string;
+  trial_index: number;
+  result: "PASS" | "FAIL" | "PARTIAL";
+  observer: string;
+  notes?: string;
+  reaction_latency_ms?: number;
+  stop_distance_m?: number;
+  intent_accuracy?: number;
+  ai_fps_avg?: number;
+  success_rate?: number;
+  created_at: string;
+}
+
+interface ExperimentList { total: number; items: ExperimentTrial[]; }
 
 interface Snapshot {
   id: number;
@@ -45,6 +65,36 @@ function fmt(v: number | null | undefined, d = 1, s = "") {
   return `${Number(v).toFixed(d)}${s}`;
 }
 
+// ── CSV Download helper ────────────────────────────────────────────────────────
+function useCSVDownload() {
+  return useCallback(async (endpoint: string, filename: string) => {
+    try {
+      const res = await fetchWithAuth(endpoint);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch {
+      alert(`Download failed: ${filename}`);
+    }
+  }, []);
+}
+
+function DownloadBtn({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-blue-600 hover:bg-blue-50 px-2 py-1 rounded-lg transition-colors border border-slate-200 hover:border-blue-200"
+    >
+      <Download className="w-3 h-3" />
+      {label}
+    </button>
+  );
+}
+
 function SkeletonLine({ w = "100%" }: { w?: string }) {
   return <div className="h-3 rounded bg-slate-100 animate-pulse" style={{ width: w }} />;
 }
@@ -58,18 +108,24 @@ function EmptyChart({ label }: { label: string }) {
   );
 }
 
-function SectionHeader({ icon: Icon, title, subtitle, accent }: {
+function SectionHeader({ icon: Icon, title, subtitle, accent, onDownload, downloadLabel }: {
   icon: React.ElementType; title: string; subtitle: string; accent: string;
+  onDownload?: () => void; downloadLabel?: string;
 }) {
   return (
-    <div className="flex items-center gap-3 mb-5">
-      <div className={`p-2.5 rounded-xl ${accent}`}>
-        <Icon className="w-5 h-5 text-white" />
+    <div className="flex items-center justify-between gap-3 mb-5">
+      <div className="flex items-center gap-3">
+        <div className={`p-2.5 rounded-xl ${accent}`}>
+          <Icon className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <h3 className="text-base font-bold text-slate-800 leading-tight">{title}</h3>
+          <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
+        </div>
       </div>
-      <div>
-        <h3 className="text-base font-bold text-slate-800 leading-tight">{title}</h3>
-        <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
-      </div>
+      {onDownload && downloadLabel && (
+        <DownloadBtn onClick={onDownload} label={downloadLabel} />
+      )}
     </div>
   );
 }
@@ -99,9 +155,123 @@ function StatRow({ label, value, badge, badgeOk, loading }: {
   );
 }
 
+// ── Experiment Panel ──────────────────────────────────────────────────────────
+const SCENARIO_LABELS: Record<string, string> = {
+  detector_eval: "Detector Eval",
+  tracker_eval: "Tracker Eval",
+  intent_eval: "Intent CNN Eval",
+  risk_scorer_eval: "Risk Scorer Eval",
+  dataset_gate: "Dataset Gate",
+  corridor_empty: "Corridor Trống",
+  static_person: "Người Đứng Gần",
+  approaching_person: "Người Tiến Lại",
+  crossing_person: "Người Cắt Ngang",
+  bad_depth: "Depth Xấu",
+  perception_degrade: "Perception Degrade",
+};
+
+function ResultBadge({ result }: { result: string }) {
+  const cfg = {
+    PASS: { cls: "bg-emerald-100 text-emerald-700", icon: CheckCircle },
+    FAIL: { cls: "bg-rose-100 text-rose-700", icon: XCircle },
+    PARTIAL: { cls: "bg-amber-50 text-amber-600", icon: ChevronDown },
+  }[result] ?? { cls: "bg-slate-100 text-slate-500", icon: Activity };
+  const Icon = cfg.icon;
+  return (
+    <span className={`flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>
+      <Icon className="w-3 h-3" /> {result}
+    </span>
+  );
+}
+
+function ExperimentPanel({ download }: { download: (ep: string, fn: string) => Promise<void> }) {
+  const [trials, setTrials] = useState<ExperimentTrial[]>([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        const res = await fetchWithAuth("/api/experiments/trials?limit=20");
+        const data = (await res.json()) as ExperimentList;
+        setTrials(data.items);
+        setTotal(data.total);
+      } catch { /* keep stale */ } finally { setLoading(false); }
+    };
+    void run();
+  }, []);
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-indigo-500">
+            <Activity className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <h3 className="text-base font-bold text-slate-800">Kết quả Thực nghiệm §6.3</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              {total} trial{total !== 1 ? "s" : ""} recorded · Offline + Online
+            </p>
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <DownloadBtn onClick={() => void download("/api/experiments/export/offline", "offline_eval.csv")} label="Offline CSV" />
+          <DownloadBtn onClick={() => void download("/api/experiments/export/online", "online_eval.csv")} label="Online CSV" />
+          <DownloadBtn onClick={() => void download("/api/experiments/export/summary", "experiment_summary.csv")} label="Summary CSV" />
+          <DownloadBtn onClick={() => void download("/api/experiments/export/full", "experiment_results_full.csv")} label="Full CSV" />
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="space-y-2">{[0,1,2].map(i => (
+          <div key={i} className="h-12 rounded-lg bg-slate-50 animate-pulse" />
+        ))}</div>
+      ) : trials.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center">
+          <Activity className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+          <p className="text-sm text-slate-400">Chưa có trial nào — dùng POST /api/experiments/trials để ghi số liệu</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100">
+                {["#", "Scenario", "Phase", "Trial", "Result", "Latency", "Stop Dist", "FPS", "Time"].map(h => (
+                  <th key={h} className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider py-2 pr-4 last:pr-0">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-50">
+              {trials.map(t => (
+                <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                  <td className="py-2.5 pr-4 text-slate-400 font-mono text-xs">{t.id}</td>
+                  <td className="py-2.5 pr-4 font-medium text-slate-800">{SCENARIO_LABELS[t.scenario] ?? t.scenario}</td>
+                  <td className="py-2.5 pr-4">
+                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
+                      t.phase === "offline" ? "bg-blue-50 text-blue-600" : "bg-teal-50 text-teal-600"
+                    }`}>{t.phase}</span>
+                  </td>
+                  <td className="py-2.5 pr-4 text-slate-500">{t.trial_index}</td>
+                  <td className="py-2.5 pr-4"><ResultBadge result={t.result} /></td>
+                  <td className="py-2.5 pr-4 text-slate-600 font-mono text-xs">{fmt(t.reaction_latency_ms, 0, "ms")}</td>
+                  <td className="py-2.5 pr-4 text-slate-600 font-mono text-xs">{fmt(t.stop_distance_m, 2, "m")}</td>
+                  <td className="py-2.5 pr-4 text-slate-600 font-mono text-xs">{fmt(t.ai_fps_avg, 1, " fps")}</td>
+                  <td className="py-2.5 text-slate-400 text-xs">{new Date(t.created_at).toLocaleDateString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── 6.2.1 Control ──────────────────────────────────────────────────────────────
-function ControlSection({ summary, series, loading }: {
+function ControlSection({ summary, series, loading, onDownload }: {
   summary: AnalyticsSummary | null; series: Snapshot[]; loading: boolean;
+  onDownload: (ep: string, fn: string) => Promise<void>;
 }) {
   const w = summary?.window;
   const chartData = useMemo(() =>
@@ -118,7 +288,9 @@ function ControlSection({ summary, series, loading }: {
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
       <SectionHeader icon={Gauge} title="6.2.1 · Điều khiển và Chuyển động"
         subtitle="velocity error · serial stability · odometry · stop distance · Nav2 goal"
-        accent="bg-blue-500" />
+        accent="bg-blue-500"
+        onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
+        downloadLabel="Offline CSV" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
           <StatRow label="Sai số vận tốc (avg speed)" value={fmt(w?.avg_speed, 3, " m/s")}
@@ -143,7 +315,7 @@ function ControlSection({ summary, series, loading }: {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="t" fontSize={10} stroke="#94a3b8" tickLine={false} />
                     <YAxis fontSize={10} stroke="#94a3b8" tickLine={false} width={38} tickFormatter={(v) => v.toFixed(2)} />
-                    <Tooltip formatter={(v: number) => [`${v.toFixed(3)} m/s`, "Speed"]} />
+                    <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(3)} m/s`, "Speed"]} />
                     <Line type="monotone" dataKey="speed" name="Speed" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
@@ -156,8 +328,9 @@ function ControlSection({ summary, series, loading }: {
 }
 
 // ── 6.2.2 Perception ───────────────────────────────────────────────────────────
-function PerceptionSection({ summary, series, loading }: {
+function PerceptionSection({ summary, series, loading, onDownload }: {
   summary: AnalyticsSummary | null; series: Snapshot[]; loading: boolean;
+  onDownload: (ep: string, fn: string) => Promise<void>;
 }) {
   const w = summary?.window;
   const fpsData = useMemo(() =>
@@ -170,7 +343,9 @@ function PerceptionSection({ summary, series, loading }: {
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
       <SectionHeader icon={Brain} title="6.2.2 · Perception và AI"
         subtitle="YOLO latency · ID switch · Temporal Intent CNN · accuracy 5 cls · ECE · UNCERTAIN · throughput"
-        accent="bg-violet-500" />
+        accent="bg-violet-500"
+        onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
+        downloadLabel="Offline CSV" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
           <StatRow label="Latency YOLO (avg / p95)" value="— pending profiler" badge="pending trial" loading={loading} />
@@ -197,7 +372,7 @@ function PerceptionSection({ summary, series, loading }: {
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="t" fontSize={10} stroke="#94a3b8" tickLine={false} />
                     <YAxis fontSize={10} stroke="#94a3b8" tickLine={false} width={38} />
-                    <Tooltip formatter={(v: number) => [`${v.toFixed(1)} FPS`]} />
+                    <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(1)} FPS`]} />
                     <Line type="monotone" dataKey="fps" name="AI FPS" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
@@ -210,7 +385,7 @@ function PerceptionSection({ summary, series, loading }: {
 }
 
 // ── 6.2.3 Dataset ──────────────────────────────────────────────────────────────
-function DatasetSection({ loading }: { loading: boolean }) {
+function DatasetSection({ loading, onDownload }: { loading: boolean; onDownload: (ep: string, fn: string) => Promise<void> }) {
   const rows = [
     "Tổng số ROI", "Số track hợp lệ", "Phân phối lớp (5 class)",
     "Duplicate", "Corrupt", "Pending review", "Số sample trainable",
@@ -219,7 +394,9 @@ function DatasetSection({ loading }: { loading: boolean }) {
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
       <SectionHeader icon={Database} title="6.2.3 · Dataset"
         subtitle="ROI · track hợp lệ · phân phối lớp · duplicate / corrupt · pending review · trainable"
-        accent="bg-emerald-500" />
+        accent="bg-emerald-500"
+        onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
+        downloadLabel="Dataset CSV" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
           {rows.map((label) => (
@@ -250,15 +427,18 @@ const SAFETY_SCENARIOS = [
   { id: "ai_slow",  label: "AI chậm / stale",     trigger: "latency > 500ms", expected: "DEGRADE → LIDAR-only" },
 ] as const;
 
-function SafetySection({ summary, loading }: {
+function SafetySection({ summary, loading, onDownload }: {
   summary: AnalyticsSummary | null; loading: boolean;
+  onDownload: (ep: string, fn: string) => Promise<void>;
 }) {
   const alerts = summary?.logs.recent_alerts ?? [];
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
       <SectionHeader icon={Shield} title="6.2.4 · Safety và Degrade"
         subtitle="phản ứng theo scenario · latency · success rate · recent alerts"
-        accent="bg-rose-500" />
+        accent="bg-rose-500"
+        onDownload={() => void onDownload("/api/experiments/export/online", "online_eval.csv")}
+        downloadLabel="Online CSV" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div>
           <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">Kịch bản đánh giá (online)</p>
@@ -319,6 +499,7 @@ export default function AnalyticsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const download = useCSVDownload();
 
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
@@ -353,6 +534,10 @@ export default function AnalyticsPage() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <DownloadBtn
+            onClick={() => void download("/api/experiments/export/full", "experiment_results_full.csv")}
+            label="Export All CSV"
+          />
           <StatusBadge status={summary?.collector.running ? "success" : "warning"}>
             {summary?.collector.running ? "collector live" : "collector offline"}
           </StatusBadge>
@@ -363,10 +548,11 @@ export default function AnalyticsPage() {
           </button>
         </div>
       </div>
-      <ControlSection summary={summary} series={series} loading={loading} />
-      <PerceptionSection summary={summary} series={series} loading={loading} />
-      <DatasetSection loading={loading} />
-      <SafetySection summary={summary} loading={loading} />
+      <ControlSection summary={summary} series={series} loading={loading} onDownload={download} />
+      <PerceptionSection summary={summary} series={series} loading={loading} onDownload={download} />
+      <DatasetSection loading={loading} onDownload={download} />
+      <SafetySection summary={summary} loading={loading} onDownload={download} />
+      <ExperimentPanel download={download} />
     </div>
   );
 }

@@ -5,6 +5,7 @@ from .node_state import NodeState
 from .map import Map
 from .patrol import PatrolRoute, PatrolRun, PatrolSchedule
 from .robot_config import RobotConfig
+from .experiment_trial import ExperimentTrial
 
 __all__ = [
     "User",
@@ -16,5 +17,6 @@ __all__ = [
     "PatrolRoute",
     "PatrolRun",
     "PatrolSchedule",
-    "RobotConfig"
+    "RobotConfig",
+    "ExperimentTrial",
 ]

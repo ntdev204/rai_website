@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import analytics, auth, configs, datasets, logs, maps, nodes, patrol, robot, training, users
+from app.routers import analytics, auth, configs, datasets, experiments, logs, maps, nodes, patrol, robot, training, users
 from app.routers import ws_control, ws_ssh, ws_telemetry, ws_video
 from app.core.seed import seed_admin
 from app.services.analytics_service import start_analytics_collector, stop_analytics_collector
@@ -62,6 +62,7 @@ app.include_router(maps.router)
 app.include_router(configs.router)
 app.include_router(datasets.router)
 app.include_router(training.router)
+app.include_router(experiments.router)
 
 # WebSocket routers
 app.include_router(ws_control.router)
