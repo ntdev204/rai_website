@@ -184,23 +184,10 @@ function ResultBadge({ result }: { result: string }) {
   );
 }
 
-function ExperimentPanel({ download }: { download: (ep: string, fn: string) => Promise<void> }) {
-  const [trials, setTrials] = useState<ExperimentTrial[]>([]);
-  const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const run = async () => {
-      try {
-        const res = await fetchWithAuth("/api/experiments/trials?limit=20");
-        const data = (await res.json()) as ExperimentList;
-        setTrials(data.items);
-        setTotal(data.total);
-      } catch { /* keep stale */ } finally { setLoading(false); }
-    };
-    void run();
-  }, []);
-
+function ExperimentPanel({ trials, total, loading, download }: { 
+  trials: ExperimentTrial[]; total: number; loading: boolean; 
+  download: (ep: string, fn: string) => Promise<void> 
+}) {
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
       <div className="flex items-center justify-between mb-5">
@@ -269,8 +256,8 @@ function ExperimentPanel({ download }: { download: (ep: string, fn: string) => P
 }
 
 // ── 6.2.1 Control ──────────────────────────────────────────────────────────────
-function ControlSection({ summary, series, loading, onDownload }: {
-  summary: AnalyticsSummary | null; series: Snapshot[]; loading: boolean;
+function ControlSection({ summary, series, trials, loading, onDownload }: {
+  summary: AnalyticsSummary | null; series: Snapshot[]; trials: ExperimentTrial[]; loading: boolean;
   onDownload: (ep: string, fn: string) => Promise<void>;
 }) {
   const w = summary?.window;
@@ -283,6 +270,20 @@ function ControlSection({ summary, series, loading, onDownload }: {
   const dominantMode = w
     ? Object.entries(w.navigation_modes ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—"
     : "—";
+
+  const tStop = trials.find(t => t.stop_distance_m != null);
+  const stopDist = tStop ? `${tStop.stop_distance_m} m` : "— pending trial";
+  const badgeStop = tStop ? "trial data" : "pending trial";
+
+  const tNav = trials.filter(t => t.success_count != null && t.total_count != null);
+  let navGoal = "— pending trial";
+  let badgeNav = "pending trial";
+  if (tNav.length > 0) {
+    const sumS = tNav.reduce((acc, t) => acc + (t.success_count || 0), 0);
+    const sumT = tNav.reduce((acc, t) => acc + (t.total_count || 0), 0);
+    navGoal = `${((sumS / sumT) * 100).toFixed(1)}%`;
+    badgeNav = "trial data";
+  }
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -297,9 +298,9 @@ function ControlSection({ summary, series, loading, onDownload }: {
             badge={fmt(w?.max_speed, 2, " m/s max")} loading={loading} />
           <StatRow label="Độ ổn định serial" value="— pending log" badge="pending trial" loading={loading} />
           <StatRow label="Sai số odometry" value="— pending log" badge="pending trial" loading={loading} />
-          <StatRow label="Khoảng cách stop thực tế" value="— pending trial" badge="pending trial" loading={loading} />
+          <StatRow label="Khoảng cách stop thực tế" value={stopDist} badge={badgeStop} loading={loading} />
           <StatRow label="Navigation mode" value={dominantMode} loading={loading} />
-          <StatRow label="Tỷ lệ đến Goal Nav2" value="— pending trial" badge="pending trial" loading={loading} />
+          <StatRow label="Tỷ lệ đến Goal Nav2" value={navGoal} badge={badgeNav} loading={loading} />
           {!loading && w && (
             <p className="pt-3 text-xs text-slate-400">{w.samples} snapshots · cửa sổ {w.hours}h</p>
           )}
@@ -328,8 +329,8 @@ function ControlSection({ summary, series, loading, onDownload }: {
 }
 
 // ── 6.2.2 Perception ───────────────────────────────────────────────────────────
-function PerceptionSection({ summary, series, loading, onDownload }: {
-  summary: AnalyticsSummary | null; series: Snapshot[]; loading: boolean;
+function PerceptionSection({ summary, series, trials, loading, onDownload }: {
+  summary: AnalyticsSummary | null; series: Snapshot[]; trials: ExperimentTrial[]; loading: boolean;
   onDownload: (ep: string, fn: string) => Promise<void>;
 }) {
   const w = summary?.window;
@@ -338,6 +339,17 @@ function PerceptionSection({ summary, series, loading, onDownload }: {
       t: new Date(s.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       fps: s.ai_fps ?? null,
     })), [series]);
+
+  const tDet = trials.find(t => t.scenario === "detector_eval");
+  const tTrk = trials.find(t => t.scenario === "tracker_eval");
+  const tInt = trials.find(t => t.scenario === "intent_eval");
+
+  const valLatDet = tDet ? `${tDet.detector_latency_avg_ms}ms / ${tDet.detector_latency_p95_ms}ms` : "— pending profiler";
+  const valTrack = tTrk ? `sw: ${tTrk.tracker_id_switch_rate} | loss: ${tTrk.tracker_loss_rate}` : "— pending tracker log";
+  const valLatInt = tInt ? `${tInt.intent_latency_avg_ms}ms / ${tInt.intent_latency_p95_ms}ms` : "— pending profiler";
+  const valAccInt = tInt ? `${(tInt.intent_accuracy ?? 0) * 100}%` : "— pending eval";
+  const valEceInt = tInt ? `${tInt.intent_ece}` : "— pending eval";
+  const valUncInt = tInt ? `${((tInt.intent_uncertain_rate ?? 0) * 100).toFixed(1)}%` : "— pending runtime log";
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -348,12 +360,12 @@ function PerceptionSection({ summary, series, loading, onDownload }: {
         downloadLabel="Offline CSV" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
-          <StatRow label="Latency YOLO (avg / p95)" value="— pending profiler" badge="pending trial" loading={loading} />
-          <StatRow label="ID switch / track loss" value="— pending tracker log" badge="pending trial" loading={loading} />
-          <StatRow label="Latency Temporal Intent CNN" value="— pending profiler" badge="pending trial" loading={loading} />
-          <StatRow label="Accuracy 5 lớp trainable" value="— pending eval" badge="pending eval" loading={loading} />
-          <StatRow label="ECE và calibration" value="— pending eval" badge="pending eval" loading={loading} />
-          <StatRow label="Tỷ lệ UNCERTAIN" value="— pending runtime log" badge="pending trial" loading={loading} />
+          <StatRow label="Latency YOLO (avg / p95)" value={valLatDet} badge={tDet ? "trial data" : "pending trial"} loading={loading} />
+          <StatRow label="ID switch / track loss" value={valTrack} badge={tTrk ? "trial data" : "pending trial"} loading={loading} />
+          <StatRow label="Latency Temporal Intent CNN" value={valLatInt} badge={tInt ? "trial data" : "pending trial"} loading={loading} />
+          <StatRow label="Accuracy 5 lớp trainable" value={valAccInt} badge={tInt ? "trial data" : "pending eval"} loading={loading} />
+          <StatRow label="ECE và calibration" value={valEceInt} badge={tInt ? "trial data" : "pending eval"} loading={loading} />
+          <StatRow label="Tỷ lệ UNCERTAIN" value={valUncInt} badge={tInt ? "trial data" : "pending trial"} loading={loading} />
           <StatRow label="AI FPS trung bình" value={fmt(w?.avg_ai_fps, 1, " FPS")}
             badge={w?.avg_ai_fps != null ? (w.avg_ai_fps >= 20 ? "realtime ✓" : "< 20 FPS") : "pending"}
             badgeOk={w?.avg_ai_fps != null ? w.avg_ai_fps >= 20 : undefined}
@@ -385,10 +397,20 @@ function PerceptionSection({ summary, series, loading, onDownload }: {
 }
 
 // ── 6.2.3 Dataset ──────────────────────────────────────────────────────────────
-function DatasetSection({ loading, onDownload }: { loading: boolean; onDownload: (ep: string, fn: string) => Promise<void> }) {
+function DatasetSection({ trials, loading, onDownload }: { 
+  trials: ExperimentTrial[]; loading: boolean; 
+  onDownload: (ep: string, fn: string) => Promise<void> 
+}) {
+  const tDat = trials.find(t => t.scenario === "dataset_gate");
+  const getVal = (v: number | null | undefined, suffix = "") => tDat && v != null ? `${v}${suffix}` : "— pending data";
   const rows = [
-    "Tổng số ROI", "Số track hợp lệ", "Phân phối lớp (5 class)",
-    "Duplicate", "Corrupt", "Pending review", "Số sample trainable",
+    { label: "Tổng số ROI", value: getVal(tDat?.dataset_total_samples) },
+    { label: "Số track hợp lệ", value: getVal(tDat?.dataset_min_class_count) },
+    { label: "Phân phối lớp (5 class)", value: tDat ? "Balanced" : "— pending data" },
+    { label: "Duplicate", value: getVal(tDat?.dataset_duplicate_rate, "%") },
+    { label: "Corrupt", value: getVal(tDat?.dataset_corrupt_rate, "%") },
+    { label: "Pending review", value: getVal(tDat?.dataset_pending_review_rate, "%") },
+    { label: "Số sample trainable", value: getVal(tDat?.dataset_total_samples) },
   ];
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
@@ -399,8 +421,8 @@ function DatasetSection({ loading, onDownload }: { loading: boolean; onDownload:
         downloadLabel="Dataset CSV" />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
-          {rows.map((label) => (
-            <StatRow key={label} label={label} value="— pending dataset API" badge="pending pipeline" loading={loading} />
+          {rows.map((r) => (
+            <StatRow key={r.label} label={r.label} value={r.value} badge={tDat ? "trial data" : "pending pipeline"} loading={loading} />
           ))}
           <p className="pt-3 text-xs text-slate-400">
             Sẽ được điền sau khi chạy auto-label pipeline và expose{" "}
@@ -496,6 +518,8 @@ function SafetySection({ summary, loading, onDownload }: {
 export default function AnalyticsPage() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [series, setSeries] = useState<Snapshot[]>([]);
+  const [trials, setTrials] = useState<ExperimentTrial[]>([]);
+  const [totalTrials, setTotalTrials] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -504,12 +528,16 @@ export default function AnalyticsPage() {
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const [sumRes, serRes] = await Promise.all([
+      const [sumRes, serRes, trialRes] = await Promise.all([
         fetchWithAuth("/api/analytics/summary?hours=24"),
         fetchWithAuth("/api/analytics/timeseries?hours=6&limit=240"),
+        fetchWithAuth("/api/experiments/trials?limit=100")
       ]);
       setSummary((await sumRes.json()) as AnalyticsSummary);
       setSeries((await serRes.json()) as Snapshot[]);
+      const trialData = await trialRes.json() as ExperimentList;
+      setTrials(trialData.items || []);
+      setTotalTrials(trialData.total || 0);
       setLastUpdated(new Date());
     } catch { /* keep stale */ } finally {
       setLoading(false);
@@ -548,11 +576,11 @@ export default function AnalyticsPage() {
           </button>
         </div>
       </div>
-      <ControlSection summary={summary} series={series} loading={loading} onDownload={download} />
-      <PerceptionSection summary={summary} series={series} loading={loading} onDownload={download} />
-      <DatasetSection loading={loading} onDownload={download} />
+      <ControlSection summary={summary} series={series} trials={trials} loading={loading} onDownload={download} />
+      <PerceptionSection summary={summary} series={series} trials={trials} loading={loading} onDownload={download} />
+      <DatasetSection trials={trials} loading={loading} onDownload={download} />
       <SafetySection summary={summary} loading={loading} onDownload={download} />
-      <ExperimentPanel download={download} />
+      <ExperimentPanel trials={trials} total={totalTrials} loading={loading} download={download} />
     </div>
   );
 }
