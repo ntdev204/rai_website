@@ -2,8 +2,33 @@
 
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { fetchWithAuth } from "@/lib/api";
-import { CheckCircle2, Database, Download, RefreshCw, Sparkles, Upload } from "lucide-react";
+import {
+  Bot,
+  CheckCircle2,
+  CloudDownload,
+  Database,
+  Download,
+  Play,
+  RefreshCw,
+  Save,
+  Sparkles,
+  Square,
+  Tag,
+  Upload,
+} from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
+
+const INTENT_LABELS = ["STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "ERRATIC", "UNCERTAIN"];
+
+interface CollectionStatus {
+  status?: string;
+  dataset_type?: string;
+  session_id?: string;
+  frame_count?: number;
+  sequence_count?: number;
+  bytes_total?: number;
+  error?: string | null;
+}
 
 interface ServerDatasetStatus {
   status: "empty" | "raw_ready" | "auto_labeled";
@@ -27,6 +52,8 @@ interface SequenceLabel {
   label_source: string;
   confidence: number;
   review_status: string;
+  human_final_required?: boolean;
+  labeling_agents?: Record<string, boolean>;
   notes?: string;
 }
 
@@ -58,10 +85,16 @@ interface AutolabelResult {
 export default function DatasetPage() {
   const fileRef = useRef<HTMLInputElement | null>(null);
   const objectUrlsRef = useRef<string[]>([]);
+  const previewUrlRef = useRef<string | null>(null);
+  const [collection, setCollection] = useState<CollectionStatus>({});
   const [status, setStatus] = useState<ServerDatasetStatus>({ status: "empty" });
   const [sequences, setSequences] = useState<SequenceItem[]>([]);
   const [selected, setSelected] = useState<SequenceItem | null>(null);
   const [thumbs, setThumbs] = useState<Record<string, string>>({});
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [frameIndex, setFrameIndex] = useState(0);
+  const [labelDraft, setLabelDraft] = useState("UNCERTAIN");
+  const [secondaryDraft, setSecondaryDraft] = useState("crossing_right");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [autolabel, setAutolabel] = useState<AutolabelResult | null>(null);
@@ -72,9 +105,15 @@ export default function DatasetPage() {
     setThumbs({});
   }, []);
 
+  const loadCollection = useCallback(async () => {
+    const response = await fetchWithAuth("/api/datasets/collection");
+    setCollection((await response.json()) as CollectionStatus);
+  }, []);
+
   const loadDataset = useCallback(async () => {
     const response = await fetchWithAuth("/api/datasets/sequences");
     const payload = (await response.json()) as SequenceResponse;
+    const nextSequences = payload.sequences ?? [];
     setStatus({
       status: payload.status,
       dataset_stage: payload.dataset_stage,
@@ -90,11 +129,14 @@ export default function DatasetPage() {
       review_pending: payload.review_pending,
       ready_for_training: payload.ready_for_training,
     });
-    setSequences(payload.sequences ?? []);
-    setSelected((current) => current ?? payload.sequences?.[0] ?? null);
+    setSequences(nextSequences);
+    setSelected((current) => {
+      if (!current) return nextSequences[0] ?? null;
+      return nextSequences.find((sequence) => sequence.sequence_id === current.sequence_id) ?? nextSequences[0] ?? null;
+    });
 
     clearThumbs();
-    const visible = (payload.sequences ?? []).slice(0, 80);
+    const visible = nextSequences.slice(0, 80);
     const entries = await Promise.all(
       visible.map(async (sequence) => {
         const preview = await fetchWithAuth(`/api/datasets/sequences/${sequence.sequence_id}/preview/0`);
@@ -106,14 +148,89 @@ export default function DatasetPage() {
     setThumbs(Object.fromEntries(entries));
   }, [clearThumbs]);
 
+  const refreshAll = useCallback(async () => {
+    await Promise.all([
+      loadCollection().catch(() => undefined),
+      loadDataset(),
+    ]);
+  }, [loadCollection, loadDataset]);
+
   useEffect(() => {
-    void Promise.resolve()
-      .then(() => loadDataset())
-      .catch((error) => {
+    const timer = window.setTimeout(() => {
+      void refreshAll().catch((error) => {
         setMessage(error instanceof Error ? error.message : "Cannot load dataset");
       });
-    return () => clearThumbs();
-  }, [clearThumbs, loadDataset]);
+    }, 0);
+    return () => {
+      window.clearTimeout(timer);
+      clearThumbs();
+      if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    };
+  }, [clearThumbs, refreshAll]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFrameIndex(0);
+      setLabelDraft(selected?.label?.primary_label ?? "UNCERTAIN");
+      setSecondaryDraft(selected?.label?.secondary_label ?? "crossing_right");
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selected?.sequence_id, selected?.label?.primary_label, selected?.label?.secondary_label]);
+
+  useEffect(() => {
+    if (!selected) {
+      const timer = window.setTimeout(() => setPreviewUrl(""), 0);
+      return () => window.clearTimeout(timer);
+    }
+    let cancelled = false;
+    void fetchWithAuth(`/api/datasets/sequences/${selected.sequence_id}/preview/${frameIndex}`)
+      .then(async (response) => {
+        const url = URL.createObjectURL(await response.blob());
+        if (cancelled) {
+          URL.revokeObjectURL(url);
+          return;
+        }
+        if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+        previewUrlRef.current = url;
+        setPreviewUrl(url);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [frameIndex, selected]);
+
+  const collectionAction = async (endpoint: string, success: string, body?: unknown) => {
+    setBusy(true);
+    setMessage("");
+    try {
+      await fetchWithAuth(endpoint, {
+        method: "POST",
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      await loadCollection();
+      setMessage(success);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Robot collection request failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const importRobotCollection = async () => {
+    setBusy(true);
+    setMessage("");
+    setAutolabel(null);
+    try {
+      await fetchWithAuth("/api/datasets/collection/import-latest", { method: "POST" });
+      await refreshAll();
+      setMessage("Robot collection imported as whole-track K-frame sequences.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Cannot import robot collection");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const uploadDataset = async (file?: File | null) => {
     if (!file) return;
@@ -154,6 +271,27 @@ export default function DatasetPage() {
     }
   };
 
+  const saveManualLabel = async () => {
+    if (!selected) return;
+    setBusy(true);
+    setMessage("");
+    try {
+      await fetchWithAuth(`/api/datasets/sequences/${selected.sequence_id}/label`, {
+        method: "POST",
+        body: JSON.stringify({
+          primary_label: labelDraft,
+          secondary_label: labelDraft === "CROSSING" ? secondaryDraft : null,
+        }),
+      });
+      await loadDataset();
+      setMessage("Manual label saved and training manifest regenerated.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Cannot save label");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const downloadDataset = async (kind: "raw" | "labeled") => {
     setBusy(true);
     setMessage("");
@@ -180,13 +318,14 @@ export default function DatasetPage() {
   const canAutolabel = status.status === "raw_ready" || status.status === "auto_labeled";
   const classCounts = status.class_counts ?? autolabel?.class_counts ?? {};
   const reviewPending = status.review_pending ?? autolabel?.review_pending ?? {};
+  const collectionRecording = collection.status === "recording";
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-800">Dataset</h2>
-          <div className="mt-1 text-sm text-slate-500">Sequence upload, server auto-label, and training handoff</div>
+          <div className="mt-1 text-sm text-slate-500">Whole-track collection, labeling, review, and training handoff</div>
         </div>
         <div className="flex flex-wrap gap-2">
           <input
@@ -207,7 +346,7 @@ export default function DatasetPage() {
           </button>
           <button
             type="button"
-            onClick={() => loadDataset()}
+            onClick={() => refreshAll()}
             disabled={busy}
             className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
           >
@@ -234,6 +373,62 @@ export default function DatasetPage() {
           </button>
         </div>
       </div>
+
+      <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <Bot className="h-4 w-4 text-blue-600" />
+            Robot Collection
+          </div>
+          <StatusBadge status={collectionRecording ? "success" : collection.error ? "error" : "default"}>
+            {collection.status ?? "unknown"}
+          </StatusBadge>
+        </div>
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
+          <Metric label="Robot Session" value={collection.session_id ?? "-"} />
+          <Metric label="Robot Frames" value={String(collection.frame_count ?? "-")} />
+          <Metric label="Robot Tracks" value={String(collection.sequence_count ?? "-")} />
+          <Metric label="Bytes" value={formatBytes(collection.bytes_total)} />
+        </div>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => collectionAction("/api/datasets/collection/start", "Robot collection started.", { mode: "intent_cnn" })}
+            disabled={busy || collectionRecording}
+            className="inline-flex items-center gap-2 rounded-md bg-emerald-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Play className="h-4 w-4" />
+            Start
+          </button>
+          <button
+            type="button"
+            onClick={() => collectionAction("/api/datasets/collection/stop", "Robot collection stopped.")}
+            disabled={busy || !collectionRecording}
+            className="inline-flex items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Square className="h-4 w-4" />
+            Stop
+          </button>
+          <button
+            type="button"
+            onClick={() => collectionAction("/api/datasets/collection/save", "Robot collection saved.")}
+            disabled={busy || collectionRecording || !collection.session_id}
+            className="inline-flex items-center gap-2 rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Save className="h-4 w-4" />
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={importRobotCollection}
+            disabled={busy || collectionRecording || !collection.session_id}
+            className="inline-flex items-center gap-2 rounded-md border border-blue-300 bg-blue-50 px-3 py-2 text-sm font-semibold text-blue-800 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <CloudDownload className="h-4 w-4" />
+            Import
+          </button>
+        </div>
+      </section>
 
       <section className="grid grid-cols-1 gap-3 md:grid-cols-5">
         <Metric label="Dataset" value={status.dataset_id ?? "-"} />
@@ -270,12 +465,12 @@ export default function DatasetPage() {
         </section>
       )}
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_380px]">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-[1fr_400px]">
         <section className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
           <div className="mb-4 flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
               <Database className="h-4 w-4 text-indigo-600" />
-              Track Sequences
+              K-Frame Tracks
             </div>
             <StatusBadge status={status.status === "auto_labeled" ? "success" : status.status === "raw_ready" ? "warning" : "default"}>
               {status.dataset_stage ?? status.status}
@@ -284,7 +479,7 @@ export default function DatasetPage() {
 
           {sequences.length === 0 ? (
             <div className="rounded-md border border-dashed border-slate-300 bg-slate-50 p-8 text-center text-sm text-slate-500">
-              No uploaded raw sequence dataset.
+              No raw sequence dataset.
             </div>
           ) : (
             <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-5">
@@ -309,7 +504,7 @@ export default function DatasetPage() {
                   <div className="space-y-1 px-2 py-2">
                     <div className="truncate text-xs font-semibold text-slate-800">{sequence.track_id}</div>
                     <div className="flex items-center justify-between gap-2 text-[11px] text-slate-500">
-                      <span>{sequence.frame_count}f</span>
+                      <span>K={sequence.frame_count}</span>
                       <span>{sequence.label?.primary_label ?? "RAW"}</span>
                     </div>
                   </div>
@@ -320,24 +515,80 @@ export default function DatasetPage() {
         </section>
 
         <aside className="sticky top-4 h-[calc(100vh-10rem)] overflow-hidden rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="mb-4 text-sm font-semibold text-slate-800">Selected Sequence</div>
+          <div className="mb-4 flex items-center gap-2 text-sm font-semibold text-slate-800">
+            <Tag className="h-4 w-4 text-blue-600" />
+            Review Track
+          </div>
           {selected ? (
             <div className="h-full space-y-4 overflow-y-auto pr-1">
-              {thumbs[selected.sequence_id] && (
+              {previewUrl && (
                 <img
-                  src={thumbs[selected.sequence_id]}
+                  src={previewUrl}
                   alt={selected.sequence_id}
                   className="h-56 w-full rounded-md border border-slate-200 bg-black object-contain"
                 />
               )}
+              <div className="space-y-2">
+                <input
+                  type="range"
+                  min={0}
+                  max={Math.max(0, selected.frame_count - 1)}
+                  value={Math.min(frameIndex, Math.max(0, selected.frame_count - 1))}
+                  onChange={(event) => setFrameIndex(Number(event.target.value))}
+                  className="w-full"
+                />
+                <div className="flex justify-between text-xs text-slate-500">
+                  <span>Frame {Math.min(frameIndex + 1, selected.frame_count)}</span>
+                  <span>K={selected.frame_count}</span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <label className="block text-sm">
+                  <span className="text-xs font-medium text-slate-500">Intent</span>
+                  <select
+                    value={labelDraft}
+                    onChange={(event) => setLabelDraft(event.target.value)}
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    {INTENT_LABELS.map((label) => (
+                      <option key={label} value={label}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="block text-sm">
+                  <span className="text-xs font-medium text-slate-500">Direction</span>
+                  <select
+                    value={secondaryDraft}
+                    onChange={(event) => setSecondaryDraft(event.target.value)}
+                    disabled={labelDraft !== "CROSSING"}
+                    className="mt-1 w-full rounded-md border border-slate-300 px-3 py-2 text-sm disabled:bg-slate-100"
+                  >
+                    <option value="crossing_right">right</option>
+                    <option value="crossing_left">left</option>
+                  </select>
+                </label>
+              </div>
+              <button
+                type="button"
+                onClick={saveManualLabel}
+                disabled={busy}
+                className="inline-flex w-full items-center justify-center gap-2 rounded-md bg-blue-600 px-3 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Tag className="h-4 w-4" />
+                Save Label
+              </button>
+
               <div className="space-y-2 text-sm">
                 <Detail label="Sequence" value={selected.sequence_id} />
                 <Detail label="Session" value={selected.session_id ?? "-"} />
                 <Detail label="Track" value={selected.track_id ?? "-"} />
-                <Detail label="Frames" value={String(selected.frame_count)} />
                 <Detail label="Depth Valid" value={formatPercent(selected.depth_valid_ratio)} />
                 <Detail label="Label" value={selected.label?.primary_label ?? "RAW"} />
                 <Detail label="Source" value={selected.label?.label_source ?? "-"} />
+                <Detail label="Agents" value={formatAgents(selected.label?.labeling_agents)} />
                 <Detail label="Confidence" value={formatPercent(selected.label?.confidence)} />
                 <Detail label="Review" value={selected.label?.review_status ?? "-"} />
               </div>
@@ -346,7 +597,7 @@ export default function DatasetPage() {
               </pre>
             </div>
           ) : (
-            <div className="text-sm text-slate-500">Select a sequence to inspect metadata.</div>
+            <div className="text-sm text-slate-500">Select a sequence.</div>
           )}
         </aside>
       </div>
@@ -379,4 +630,19 @@ function formatPercent(value?: number) {
 function formatCounts(values: Record<string, number>) {
   const entries = Object.entries(values).filter(([, count]) => count > 0);
   return entries.length ? entries.map(([label, count]) => `${label}:${count}`).join(", ") : "0";
+}
+
+function formatBytes(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  if (value < 1024) return `${value} B`;
+  if (value < 1024 * 1024) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatAgents(values?: Record<string, boolean>) {
+  if (!values) return "-";
+  const active = Object.entries(values)
+    .filter(([, enabled]) => enabled)
+    .map(([name]) => name.toUpperCase());
+  return active.length ? active.join(" + ") : "-";
 }

@@ -240,7 +240,7 @@ export default function TrainingPage() {
               <NumberInput label="Batch" value={config.batch_size} onChange={(value) => update("batch_size", value)} />
               <NumberInput label="LR" value={config.lr} step="0.0001" onChange={(value) => update("lr", value)} />
               <NumberInput label="Val Split" value={config.val_split} step="0.01" onChange={(value) => update("val_split", value)} />
-              <NumberInput label="Window" value={config.temporal_window} onChange={(value) => update("temporal_window", value)} />
+              <NumberInput label="Model Frames" value={config.temporal_window} onChange={(value) => update("temporal_window", value)} />
               <NumberInput label="Workers" value={config.workers} onChange={(value) => update("workers", value)} />
               <NumberInput label="Lambda Dir" value={config.lambda_dir} step="0.1" onChange={(value) => update("lambda_dir", value)} />
               <NumberInput label="Freeze" value={config.freeze_blocks} onChange={(value) => update("freeze_blocks", value)} />
