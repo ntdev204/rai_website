@@ -3,50 +3,14 @@
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { fetchWithAuth } from "@/lib/api";
 import {
-  Activity, AlertTriangle, Brain, CheckCircle, ChevronDown,
-  Database, Download, Gauge, RefreshCw, Shield, XCircle,
+  Activity, AlertTriangle, BarChart3, Bot, Brain, Download,
+  Gauge, RefreshCw, Shield, TrendingUp, Users,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  CartesianGrid, Line, LineChart,
+  CartesianGrid, Cell, Line, LineChart, Pie, PieChart,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
-
-// ── Types ──────────────────────────────────────────────────────────────────────
-interface ExperimentTrial {
-  id: number;
-  scenario: string;
-  phase: string;
-  trial_index: number;
-  result: "PASS" | "FAIL" | "PARTIAL";
-  observer: string;
-  notes?: string;
-  reaction_latency_ms?: number;
-  stop_distance_m?: number;
-  intent_accuracy?: number;
-  ai_fps_avg?: number;
-  success_rate?: number;
-  success_count?: number;
-  total_count?: number;
-  detector_latency_avg_ms?: number;
-  detector_latency_p95_ms?: number;
-  detector_rate?: number;
-  detector_fp_rate?: number;
-  tracker_id_switch_rate?: number;
-  tracker_loss_rate?: number;
-  intent_ece?: number;
-  intent_uncertain_rate?: number;
-  intent_latency_avg_ms?: number;
-  intent_latency_p95_ms?: number;
-  dataset_total_samples?: number;
-  dataset_min_class_count?: number;
-  dataset_duplicate_rate?: number;
-  dataset_corrupt_rate?: number;
-  dataset_pending_review_rate?: number;
-  created_at: string;
-}
-
-interface ExperimentList { total: number; items: ExperimentTrial[]; }
 
 interface Snapshot {
   id: number;
@@ -62,27 +26,38 @@ interface AnalyticsSummary {
   collector: { running: boolean; interval_sec: number; retention_hours: number };
   current: Snapshot | null;
   window: {
-    hours: number; samples: number;
-    avg_speed?: number | null; max_speed?: number | null;
+    hours: number;
+    samples: number;
+    avg_speed?: number | null;
+    max_speed?: number | null;
     avg_ai_fps?: number | null;
-    person_observations: number; obstacle_observations: number;
+    person_observations: number;
+    obstacle_observations: number;
     navigation_modes: Record<string, number>;
   };
   logs: {
     by_severity: Record<string, number>;
     recent_alerts: Array<{
-      id: number; severity: string; source: string;
-      event_type: string; message: string; created_at: string;
+      id: number;
+      severity: string;
+      source: string;
+      event_type: string;
+      message: string;
+      created_at: string;
     }>;
   };
 }
 
-function fmt(v: number | null | undefined, d = 1, s = "") {
+function fmt(v: number | null | undefined, digits = 1, suffix = "") {
   if (v == null || Number.isNaN(v)) return "—";
-  return `${Number(v).toFixed(d)}${s}`;
+  return `${Number(v).toFixed(digits)}${suffix}`;
 }
 
-// ── CSV Download helper ────────────────────────────────────────────────────────
+function percent(part: number, total: number) {
+  if (!total) return "0%";
+  return `${((part / total) * 100).toFixed(1)}%`;
+}
+
 function useCSVDownload() {
   return useCallback(async (endpoint: string, filename: string) => {
     try {
@@ -125,9 +100,12 @@ function EmptyChart({ label }: { label: string }) {
   );
 }
 
-function SectionHeader({ icon: Icon, title, subtitle, accent, onDownload, downloadLabel }: {
-  icon: React.ElementType; title: string; subtitle: string; accent: string;
-  onDownload?: () => void; downloadLabel?: string;
+function SectionHeader({ icon: Icon, title, subtitle, accent, action }: {
+  icon: React.ElementType;
+  title: string;
+  subtitle: string;
+  accent: string;
+  action?: React.ReactNode;
 }) {
   return (
     <div className="flex items-center justify-between gap-3 mb-5">
@@ -140,28 +118,31 @@ function SectionHeader({ icon: Icon, title, subtitle, accent, onDownload, downlo
           <p className="text-xs text-slate-500 mt-0.5">{subtitle}</p>
         </div>
       </div>
-      {onDownload && downloadLabel && (
-        <DownloadBtn onClick={onDownload} label={downloadLabel} />
-      )}
+      {action}
     </div>
   );
 }
 
 function StatRow({ label, value, badge, badgeOk, loading }: {
-  label: string; value?: string; badge?: string; badgeOk?: boolean; loading: boolean;
+  label: string;
+  value?: string;
+  badge?: string;
+  badgeOk?: boolean;
+  loading: boolean;
 }) {
   return (
     <div className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
       <span className="text-sm text-slate-500">{label}</span>
       <div className="flex items-center gap-2">
-        {loading ? <SkeletonLine w="80px" /> : (
+        {loading ? <SkeletonLine w="90px" /> : (
           <>
             <span className="text-sm font-semibold text-slate-900">{value ?? "—"}</span>
             {badge && (
               <span className={`text-xs font-medium px-1.5 py-0.5 rounded-md ${
                 badgeOk === true ? "bg-emerald-100 text-emerald-700"
                   : badgeOk === false ? "bg-rose-100 text-rose-700"
-                  : "bg-amber-50 text-amber-600"}`}>
+                  : "bg-amber-50 text-amber-600"
+              }`}>
                 {badge}
               </span>
             )}
@@ -172,169 +153,143 @@ function StatRow({ label, value, badge, badgeOk, loading }: {
   );
 }
 
-// ── Experiment Panel ──────────────────────────────────────────────────────────
-const SCENARIO_LABELS: Record<string, string> = {
-  detector_eval: "Detector Eval",
-  tracker_eval: "Tracker Eval",
-  intent_eval: "Intent CNN Eval",
-  risk_scorer_eval: "Risk Scorer Eval",
-  dataset_gate: "Dataset Gate",
-  corridor_empty: "Corridor Trống",
-  static_person: "Người Đứng Gần",
-  approaching_person: "Người Tiến Lại",
-  crossing_person: "Người Cắt Ngang",
-  bad_depth: "Depth Xấu",
-  perception_degrade: "Perception Degrade",
-};
+function OverviewCards({ summary, loading }: { summary: AnalyticsSummary | null; loading: boolean }) {
+  const current = summary?.current;
+  const windowData = summary?.window;
+  const alerts = summary?.logs.by_severity ?? {};
+  const criticalAlerts = (alerts.ERROR ?? 0) + (alerts.CRITICAL ?? 0);
 
-function ResultBadge({ result }: { result: string }) {
-  const cfg = {
-    PASS: { cls: "bg-emerald-100 text-emerald-700", icon: CheckCircle },
-    FAIL: { cls: "bg-rose-100 text-rose-700", icon: XCircle },
-    PARTIAL: { cls: "bg-amber-50 text-amber-600", icon: ChevronDown },
-  }[result] ?? { cls: "bg-slate-100 text-slate-500", icon: Activity };
-  const Icon = cfg.icon;
+  const cards = [
+    {
+      label: "Kết nối robot",
+      value: current?.connected ? "Online" : "Offline",
+      icon: Bot,
+      accent: current?.connected ? "bg-emerald-500" : "bg-rose-500",
+      sub: current?.connected ? "telemetry đang cập nhật" : "mất trạng thái live",
+    },
+    {
+      label: "Tốc độ trung bình",
+      value: fmt(windowData?.avg_speed, 3, " m/s"),
+      icon: Gauge,
+      accent: "bg-blue-500",
+      sub: `đỉnh ${fmt(windowData?.max_speed, 2, " m/s")}`,
+    },
+    {
+      label: "AI FPS trung bình",
+      value: fmt(windowData?.avg_ai_fps, 1, " FPS"),
+      icon: Brain,
+      accent: "bg-violet-500",
+      sub: (windowData?.avg_ai_fps ?? 0) >= 20 ? "đạt realtime" : "cần theo dõi tải",
+    },
+    {
+      label: "Cảnh báo mức cao",
+      value: String(criticalAlerts),
+      icon: Shield,
+      accent: criticalAlerts > 0 ? "bg-amber-500" : "bg-slate-500",
+      sub: `trong ${windowData?.hours ?? 24} giờ gần nhất`,
+    },
+  ];
+
   return (
-    <span className={`flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full ${cfg.cls}`}>
-      <Icon className="w-3 h-3" /> {result}
-    </span>
-  );
-}
-
-function ExperimentPanel({ trials, total, loading, download }: { 
-  trials: ExperimentTrial[]; total: number; loading: boolean; 
-  download: (ep: string, fn: string) => Promise<void> 
-}) {
-  return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <div className="flex items-center justify-between mb-5">
-        <div className="flex items-center gap-3">
-          <div className="p-2.5 rounded-xl bg-indigo-500">
-            <Activity className="w-5 h-5 text-white" />
+    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+      {cards.map((card) => {
+        const Icon = card.icon;
+        return (
+          <div key={card.label} className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm text-slate-500">{card.label}</p>
+                <div className="mt-2">
+                  {loading ? <SkeletonLine w="96px" /> : (
+                    <p className="text-2xl font-bold tracking-tight text-slate-900">{card.value}</p>
+                  )}
+                </div>
+                <p className="mt-2 text-xs text-slate-400">{card.sub}</p>
+              </div>
+              <div className={`rounded-xl p-2.5 ${card.accent}`}>
+                <Icon className="w-5 h-5 text-white" />
+              </div>
+            </div>
           </div>
-          <div>
-            <h3 className="text-base font-bold text-slate-800">Kết quả Thực nghiệm (Offline & Online)</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              {total} trial{total !== 1 ? "s" : ""} recorded · Offline + Online
-            </p>
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <DownloadBtn onClick={() => void download("/api/experiments/export/offline", "offline_eval.csv")} label="Offline CSV" />
-          <DownloadBtn onClick={() => void download("/api/experiments/export/online", "online_eval.csv")} label="Online CSV" />
-          <DownloadBtn onClick={() => void download("/api/experiments/export/summary", "experiment_summary.csv")} label="Summary CSV" />
-          <DownloadBtn onClick={() => void download("/api/experiments/export/full", "experiment_results_full.csv")} label="Full CSV" />
-        </div>
-      </div>
-
-      {loading ? (
-        <div className="space-y-2">{[0,1,2].map(i => (
-          <div key={i} className="h-12 rounded-lg bg-slate-50 animate-pulse" />
-        ))}</div>
-      ) : trials.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-slate-200 p-8 text-center">
-          <Activity className="w-8 h-8 text-slate-300 mx-auto mb-2" />
-          <p className="text-sm text-slate-400">Chưa có trial nào — dùng POST /api/experiments/trials để ghi số liệu</p>
-        </div>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-slate-100">
-                {["#", "Scenario", "Phase", "Trial", "Result", "Latency", "Stop Dist", "FPS", "Time"].map(h => (
-                  <th key={h} className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider py-2 pr-4 last:pr-0">{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-50">
-              {trials.map(t => (
-                <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                  <td className="py-2.5 pr-4 text-slate-400 font-mono text-xs">{t.id}</td>
-                  <td className="py-2.5 pr-4 font-medium text-slate-800">{SCENARIO_LABELS[t.scenario] ?? t.scenario}</td>
-                  <td className="py-2.5 pr-4">
-                    <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${
-                      t.phase === "offline" ? "bg-blue-50 text-blue-600" : "bg-teal-50 text-teal-600"
-                    }`}>{t.phase}</span>
-                  </td>
-                  <td className="py-2.5 pr-4 text-slate-500">{t.trial_index}</td>
-                  <td className="py-2.5 pr-4"><ResultBadge result={t.result} /></td>
-                  <td className="py-2.5 pr-4 text-slate-600 font-mono text-xs">{fmt(t.reaction_latency_ms, 0, "ms")}</td>
-                  <td className="py-2.5 pr-4 text-slate-600 font-mono text-xs">{fmt(t.stop_distance_m, 2, "m")}</td>
-                  <td className="py-2.5 pr-4 text-slate-600 font-mono text-xs">{fmt(t.ai_fps_avg, 1, " fps")}</td>
-                  <td className="py-2.5 text-slate-400 text-xs">{new Date(t.created_at).toLocaleDateString()}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+        );
+      })}
     </div>
   );
 }
 
-// ── 6.2.1 Control ──────────────────────────────────────────────────────────────
-function ControlSection({ summary, series, trials, loading, onDownload }: {
-  summary: AnalyticsSummary | null; series: Snapshot[]; trials: ExperimentTrial[]; loading: boolean;
-  onDownload: (ep: string, fn: string) => Promise<void>;
+function OperationsSection({ summary, series, loading }: {
+  summary: AnalyticsSummary | null;
+  series: Snapshot[];
+  loading: boolean;
 }) {
-  const w = summary?.window;
-  const chartData = useMemo(() =>
-    series.map((s) => ({
+  const current = summary?.current;
+  const windowData = summary?.window;
+  const chartData = useMemo(
+    () => series.map((s) => ({
       t: new Date(s.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       speed: s.speed ?? null,
-    })), [series]);
+      persons: s.ai_persons ?? null,
+    })),
+    [series],
+  );
 
-  const dominantMode = w
-    ? Object.entries(w.navigation_modes ?? {}).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "—"
-    : "—";
-
-  const tStop = trials.find(t => t.stop_distance_m != null);
-  const stopDist = tStop ? `${tStop.stop_distance_m} m` : "— pending trial";
-  const badgeStop = tStop ? "trial data" : "pending trial";
-
-  const tNav = trials.filter(t => t.success_count != null && t.total_count != null);
-  let navGoal = "— pending trial";
-  let badgeNav = "pending trial";
-  if (tNav.length > 0) {
-    const sumS = tNav.reduce((acc, t) => acc + (t.success_count || 0), 0);
-    const sumT = tNav.reduce((acc, t) => acc + (t.total_count || 0), 0);
-    navGoal = `${((sumS / sumT) * 100).toFixed(1)}%`;
-    badgeNav = "trial data";
-  }
+  const currentMode = current?.navigation_mode ?? "—";
+  const currentPersons = current?.ai_persons ?? 0;
+  const density =
+    (windowData?.samples ?? 0) > 0
+      ? (windowData?.person_observations ?? 0) / (windowData?.samples ?? 1)
+      : 0;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Gauge} title="Điều khiển và Chuyển động"
-        subtitle="velocity error · serial stability · odometry · stop distance · Nav2 goal"
+      <SectionHeader
+        icon={Gauge}
+        title="Phân tích Vận hành"
+        subtitle="trạng thái robot · mode điều hướng · vận tốc · mật độ người theo thời gian"
         accent="bg-blue-500"
-        onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
-        downloadLabel="Offline CSV" />
+      />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
-          <StatRow label="Sai số vận tốc (avg speed)" value={fmt(w?.avg_speed, 3, " m/s")}
-            badge={fmt(w?.max_speed, 2, " m/s max")} loading={loading} />
-          <StatRow label="Độ ổn định serial" value="— pending log" badge="pending trial" loading={loading} />
-          <StatRow label="Sai số odometry" value="— pending log" badge="pending trial" loading={loading} />
-          <StatRow label="Khoảng cách stop thực tế" value={stopDist} badge={badgeStop} loading={loading} />
-          <StatRow label="Navigation mode" value={dominantMode} loading={loading} />
-          <StatRow label="Tỷ lệ đến Goal Nav2" value={navGoal} badge={badgeNav} loading={loading} />
-          {!loading && w && (
-            <p className="pt-3 text-xs text-slate-400">{w.samples} snapshots · cửa sổ {w.hours}h</p>
+          <StatRow label="Mode điều hướng hiện tại" value={currentMode} loading={loading} />
+          <StatRow label="Tốc độ hiện tại" value={fmt(current?.speed, 3, " m/s")} loading={loading} />
+          <StatRow label="Người đang quan sát" value={String(currentPersons)} loading={loading} />
+          <StatRow
+            label="Mật độ người trung bình"
+            value={fmt(density, 2, " người / snapshot")}
+            badge={(density > 2 ? "cao" : density > 0.8 ? "trung bình" : "thấp")}
+            loading={loading}
+          />
+          <StatRow
+            label="Tổng điểm quan sát người"
+            value={String(windowData?.person_observations ?? "—")}
+            loading={loading}
+          />
+          <StatRow
+            label="Tổng điểm quan sát vật cản"
+            value={String(windowData?.obstacle_observations ?? "—")}
+            loading={loading}
+          />
+          {!loading && windowData && (
+            <p className="pt-3 text-xs text-slate-400">
+              {windowData.samples} snapshots trong cửa sổ {windowData.hours} giờ
+            </p>
           )}
         </div>
         <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">Tốc độ robot theo thời gian</p>
-          <div className="h-[220px]">
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">
+            Vận tốc theo thời gian
+          </p>
+          <div className="h-[240px]">
             {loading ? <div className="h-full bg-slate-50 rounded-xl animate-pulse" />
-              : chartData.length === 0 ? <EmptyChart label="Chưa có snapshot vận tốc từ collector" />
+              : chartData.length === 0 ? <EmptyChart label="Chưa có snapshot vận hành để vẽ xu hướng" />
               : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={chartData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="t" fontSize={10} stroke="#94a3b8" tickLine={false} />
-                    <YAxis fontSize={10} stroke="#94a3b8" tickLine={false} width={38} tickFormatter={(v) => v.toFixed(2)} />
-                    <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(3)} m/s`, "Speed"]} />
-                    <Line type="monotone" dataKey="speed" name="Speed" stroke="#3b82f6" strokeWidth={2} dot={false} connectNulls />
+                    <YAxis fontSize={10} stroke="#94a3b8" tickLine={false} width={38} tickFormatter={(v) => Number(v).toFixed(2)} />
+                    <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(3)} m/s`, "Tốc độ"]} />
+                    <Line type="monotone" dataKey="speed" stroke="#2563eb" strokeWidth={2} dot={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -345,64 +300,93 @@ function ControlSection({ summary, series, trials, loading, onDownload }: {
   );
 }
 
-// ── 6.2.2 Perception ───────────────────────────────────────────────────────────
-function PerceptionSection({ summary, series, trials, loading, onDownload }: {
-  summary: AnalyticsSummary | null; series: Snapshot[]; trials: ExperimentTrial[]; loading: boolean;
-  onDownload: (ep: string, fn: string) => Promise<void>;
+function PerceptionSection({ summary, series, loading }: {
+  summary: AnalyticsSummary | null;
+  series: Snapshot[];
+  loading: boolean;
 }) {
-  const w = summary?.window;
-  const fpsData = useMemo(() =>
-    series.map((s) => ({
+  const windowData = summary?.window;
+  const fpsData = useMemo(
+    () => series.map((s) => ({
       t: new Date(s.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       fps: s.ai_fps ?? null,
-    })), [series]);
+      persons: s.ai_persons ?? null,
+    })),
+    [series],
+  );
 
-  const tDet = trials.find(t => t.scenario === "detector_eval");
-  const tTrk = trials.find(t => t.scenario === "tracker_eval");
-  const tInt = trials.find(t => t.scenario === "intent_eval");
-
-  const valLatDet = tDet ? `${tDet.detector_latency_avg_ms}ms / ${tDet.detector_latency_p95_ms}ms` : "— pending profiler";
-  const valTrack = tTrk ? `sw: ${tTrk.tracker_id_switch_rate} | loss: ${tTrk.tracker_loss_rate}` : "— pending tracker log";
-  const valLatInt = tInt ? `${tInt.intent_latency_avg_ms}ms / ${tInt.intent_latency_p95_ms}ms` : "— pending profiler";
-  const valAccInt = tInt ? `${(tInt.intent_accuracy ?? 0) * 100}%` : "— pending eval";
-  const valEceInt = tInt ? `${tInt.intent_ece}` : "— pending eval";
-  const valUncInt = tInt ? `${((tInt.intent_uncertain_rate ?? 0) * 100).toFixed(1)}%` : "— pending runtime log";
+  const fpsValues = series.map((s) => s.ai_fps).filter((v): v is number => typeof v === "number");
+  const minFps = fpsValues.length ? Math.min(...fpsValues) : null;
+  const maxFps = fpsValues.length ? Math.max(...fpsValues) : null;
+  const below20 = fpsValues.filter((v) => v < 20).length;
 
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Brain} title="Perception và AI"
-        subtitle="YOLO latency · ID switch · Temporal Intent CNN · accuracy 5 cls · ECE · UNCERTAIN · throughput"
+      <SectionHeader
+        icon={Brain}
+        title="Phân tích Perception"
+        subtitle="năng lực AI realtime · tải theo số người · độ ổn định pipeline"
         accent="bg-violet-500"
-        onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
-        downloadLabel="Offline CSV" />
+      />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
-          <StatRow label="Latency YOLO (avg / p95)" value={valLatDet} badge={tDet ? "trial data" : "pending trial"} loading={loading} />
-          <StatRow label="ID switch / track loss" value={valTrack} badge={tTrk ? "trial data" : "pending trial"} loading={loading} />
-          <StatRow label="Latency Temporal Intent CNN" value={valLatInt} badge={tInt ? "trial data" : "pending trial"} loading={loading} />
-          <StatRow label="Accuracy 5 lớp trainable" value={valAccInt} badge={tInt ? "trial data" : "pending eval"} loading={loading} />
-          <StatRow label="ECE và calibration" value={valEceInt} badge={tInt ? "trial data" : "pending eval"} loading={loading} />
-          <StatRow label="Tỷ lệ UNCERTAIN" value={valUncInt} badge={tInt ? "trial data" : "pending trial"} loading={loading} />
-          <StatRow label="AI FPS trung bình" value={fmt(w?.avg_ai_fps, 1, " FPS")}
-            badge={w?.avg_ai_fps != null ? (w.avg_ai_fps >= 20 ? "realtime ✓" : "< 20 FPS") : "pending"}
-            badgeOk={w?.avg_ai_fps != null ? w.avg_ai_fps >= 20 : undefined}
-            loading={loading} />
-          <StatRow label="Person observations (24h)" value={String(w?.person_observations ?? "—")} loading={loading} />
-          <StatRow label="Throughput theo số người" value="— pending scenario" badge="pending trial" loading={loading} />
+          <StatRow label="AI FPS trung bình" value={fmt(windowData?.avg_ai_fps, 1, " FPS")} loading={loading} />
+          <StatRow label="AI FPS thấp nhất" value={fmt(minFps, 1, " FPS")} loading={loading} />
+          <StatRow label="AI FPS cao nhất" value={fmt(maxFps, 1, " FPS")} loading={loading} />
+          <StatRow
+            label="Tỷ lệ snapshot dưới 20 FPS"
+            value={fpsValues.length ? percent(below20, fpsValues.length) : "—"}
+            badge={fpsValues.length ? `${below20}/${fpsValues.length}` : undefined}
+            badgeOk={fpsValues.length ? below20 === 0 : undefined}
+            loading={loading}
+          />
+          <StatRow
+            label="Số người quan sát / mẫu"
+            value={fmt(
+              (windowData?.samples ?? 0) > 0
+                ? (windowData?.person_observations ?? 0) / (windowData?.samples ?? 1)
+                : null,
+              2,
+            )}
+            loading={loading}
+          />
+          <StatRow
+            label="Mức tải perception"
+            value={
+              windowData?.avg_ai_fps == null
+                ? "—"
+                : windowData.avg_ai_fps >= 20
+                  ? "Ổn định"
+                  : windowData.avg_ai_fps >= 12
+                    ? "Cần theo dõi"
+                    : "Quá tải"
+            }
+            badge={
+              windowData?.avg_ai_fps == null
+                ? undefined
+                : windowData.avg_ai_fps >= 20
+                  ? "realtime"
+                  : "attention"
+            }
+            badgeOk={windowData?.avg_ai_fps != null ? windowData.avg_ai_fps >= 20 : undefined}
+            loading={loading}
+          />
         </div>
         <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">AI FPS theo thời gian</p>
-          <div className="h-[220px]">
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">
+            AI FPS theo thời gian
+          </p>
+          <div className="h-[240px]">
             {loading ? <div className="h-full bg-slate-50 rounded-xl animate-pulse" />
-              : fpsData.length === 0 ? <EmptyChart label="Chưa có AI FPS snapshot từ collector" />
+              : fpsData.length === 0 ? <EmptyChart label="Chưa có snapshot AI để phân tích" />
               : (
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={fpsData}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" />
                     <XAxis dataKey="t" fontSize={10} stroke="#94a3b8" tickLine={false} />
                     <YAxis fontSize={10} stroke="#94a3b8" tickLine={false} width={38} />
-                    <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(1)} FPS`]} />
-                    <Line type="monotone" dataKey="fps" name="AI FPS" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
+                    <Tooltip formatter={(v: unknown) => [`${Number(v).toFixed(1)} FPS`, "AI FPS"]} />
+                    <Line type="monotone" dataKey="fps" stroke="#7c3aed" strokeWidth={2} dot={false} connectNulls />
                   </LineChart>
                 </ResponsiveContainer>
               )}
@@ -413,43 +397,75 @@ function PerceptionSection({ summary, series, trials, loading, onDownload }: {
   );
 }
 
-// ── 6.2.3 Dataset ──────────────────────────────────────────────────────────────
-function DatasetSection({ trials, loading, onDownload }: { 
-  trials: ExperimentTrial[]; loading: boolean; 
-  onDownload: (ep: string, fn: string) => Promise<void> 
+function ModeDistributionSection({ summary, loading }: {
+  summary: AnalyticsSummary | null;
+  loading: boolean;
 }) {
-  const tDat = trials.find(t => t.scenario === "dataset_gate");
-  const getVal = (v: number | null | undefined, suffix = "") => tDat && v != null ? `${v}${suffix}` : "— pending data";
-  const rows = [
-    { label: "Tổng số ROI", value: getVal(tDat?.dataset_total_samples) },
-    { label: "Số track hợp lệ", value: getVal(tDat?.dataset_min_class_count) },
-    { label: "Phân phối lớp (5 class)", value: tDat ? "Balanced" : "— pending data" },
-    { label: "Duplicate", value: getVal(tDat?.dataset_duplicate_rate, "%") },
-    { label: "Corrupt", value: getVal(tDat?.dataset_corrupt_rate, "%") },
-    { label: "Pending review", value: getVal(tDat?.dataset_pending_review_rate, "%") },
-    { label: "Số sample trainable", value: getVal(tDat?.dataset_total_samples) },
-  ];
+  const modeEntries = Object.entries(summary?.window.navigation_modes ?? {});
+  const total = modeEntries.reduce((acc, [, value]) => acc + value, 0);
+  const pieData = modeEntries.map(([name, value]) => ({ name, value }));
+  const colors = ["#2563eb", "#0f766e", "#7c3aed", "#f59e0b", "#ef4444", "#64748b"];
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Database} title="Dataset"
-        subtitle="ROI · track hợp lệ · phân phối lớp · duplicate / corrupt · pending review · trainable"
-        accent="bg-emerald-500"
-        onDownload={() => void onDownload("/api/experiments/export/offline", "offline_eval.csv")}
-        downloadLabel="Dataset CSV" />
+      <SectionHeader
+        icon={BarChart3}
+        title="Phân bố Điều hướng"
+        subtitle="tỷ trọng các mode vận hành trong cửa sổ phân tích hiện tại"
+        accent="bg-cyan-500"
+      />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
         <div className="space-y-0">
-          {rows.map((r) => (
-            <StatRow key={r.label} label={r.label} value={r.value} badge={tDat ? "trial data" : "pending pipeline"} loading={loading} />
-          ))}
-          <p className="pt-3 text-xs text-slate-400">
-            Sẽ được điền sau khi chạy auto-label pipeline và expose{" "}
-            <code className="bg-slate-100 px-1 rounded">/api/dataset/stats</code>.
-          </p>
+          {loading ? (
+            <>
+              <SkeletonLine />
+              <div className="h-3" />
+              <SkeletonLine w="85%" />
+              <div className="h-3" />
+              <SkeletonLine w="65%" />
+            </>
+          ) : modeEntries.length === 0 ? (
+            <p className="text-sm text-slate-400">Chưa có dữ liệu mode điều hướng để phân tích.</p>
+          ) : (
+            modeEntries
+              .sort((a, b) => b[1] - a[1])
+              .map(([name, value]) => (
+                <StatRow
+                  key={name}
+                  label={name}
+                  value={String(value)}
+                  badge={percent(value, total)}
+                  loading={false}
+                />
+              ))
+          )}
         </div>
         <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">Phân phối lớp</p>
-          <div className="h-[220px]">
-            <EmptyChart label="Chờ /api/dataset/stats — chạy auto-label pipeline trước" />
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">
+            Tỷ trọng mode
+          </p>
+          <div className="h-[240px]">
+            {loading ? <div className="h-full bg-slate-50 rounded-xl animate-pulse" />
+              : pieData.length === 0 ? <EmptyChart label="Chưa có mode navigation trong cửa sổ đang xem" />
+              : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={pieData}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={52}
+                      outerRadius={82}
+                      paddingAngle={2}
+                    >
+                      {pieData.map((entry, index) => (
+                        <Cell key={entry.name} fill={colors[index % colors.length]} />
+                      ))}
+                    </Pie>
+                    <Tooltip formatter={(v: unknown) => [String(v), "Số mẫu"]} />
+                  </PieChart>
+                </ResponsiveContainer>
+              )}
           </div>
         </div>
       </div>
@@ -457,68 +473,61 @@ function DatasetSection({ trials, loading, onDownload }: {
   );
 }
 
-// ── 6.2.4 Safety ──────────────────────────────────────────────────────────────
-const SAFETY_SCENARIOS = [
-  { id: "approach", label: "Người tiến lại gần", trigger: "dist < 0.5m", expected: "STOP + REPULSE < 100ms" },
-  { id: "cross",    label: "Người cắt ngang",    trigger: "crossing path", expected: "SLOW + STEER < 200ms" },
-  { id: "depth",    label: "Depth xấu",           trigger: "depth variance", expected: "HOLD + ALERT" },
-  { id: "stale",    label: "Robot state stale",   trigger: "telemetry > 2s", expected: "ESTOP immediately" },
-  { id: "ai_slow",  label: "AI chậm / stale",     trigger: "latency > 500ms", expected: "DEGRADE → LIDAR-only" },
-] as const;
-
-function SafetySection({ summary, loading, onDownload }: {
-  summary: AnalyticsSummary | null; loading: boolean;
-  onDownload: (ep: string, fn: string) => Promise<void>;
-}) {
+function AlertsSection({ summary, loading }: { summary: AnalyticsSummary | null; loading: boolean }) {
   const alerts = summary?.logs.recent_alerts ?? [];
+  const severity = summary?.logs.by_severity ?? {};
+  const totalAlerts = Object.values(severity).reduce((acc, value) => acc + value, 0);
+  const warningCount = severity.WARNING ?? 0;
+  const errorCount = (severity.ERROR ?? 0) + (severity.CRITICAL ?? 0);
+
   return (
     <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
-      <SectionHeader icon={Shield} title="Safety và Degrade"
-        subtitle="phản ứng theo scenario · latency · success rate · recent alerts"
-        accent="bg-rose-500"
-        onDownload={() => void onDownload("/api/experiments/export/online", "online_eval.csv")}
-        downloadLabel="Online CSV" />
+      <SectionHeader
+        icon={AlertTriangle}
+        title="Phân tích Cảnh báo"
+        subtitle="mức độ rủi ro · nguồn cảnh báo · nhật ký gần nhất"
+        accent="bg-amber-500"
+      />
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">Kịch bản đánh giá (online)</p>
-          <div className="divide-y divide-slate-100 rounded-xl border border-slate-200 overflow-hidden">
-            {SAFETY_SCENARIOS.map((s) => (
-              <div key={s.id} className="px-4 py-3 hover:bg-slate-50 transition-colors">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium text-slate-800">{s.label}</span>
-                  <span className="text-xs font-mono text-slate-400">{s.trigger}</span>
-                </div>
-                <div className="flex items-center justify-between mt-1">
-                  <span className="text-xs text-slate-500">{s.expected}</span>
-                  <span className="text-xs px-1.5 py-0.5 rounded-md bg-amber-50 text-amber-600 font-medium">pending trial</span>
-                </div>
-              </div>
-            ))}
-          </div>
+        <div className="space-y-0">
+          <StatRow label="Tổng số cảnh báo" value={String(totalAlerts)} loading={loading} />
+          <StatRow label="Warning" value={String(warningCount)} loading={loading} />
+          <StatRow label="Error / Critical" value={String(errorCount)} loading={loading} />
+          <StatRow
+            label="Mức rủi ro vận hành"
+            value={errorCount > 0 ? "Cần can thiệp" : warningCount > 0 ? "Theo dõi" : "Ổn định"}
+            badge={errorCount > 0 ? "high" : warningCount > 0 ? "medium" : "low"}
+            badgeOk={errorCount === 0}
+            loading={loading}
+          />
         </div>
         <div>
-          <div className="flex items-center gap-2 mb-3">
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-            <p className="text-xs font-medium uppercase tracking-wider text-slate-400">Recent alerts (live)</p>
-          </div>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-400 mb-3">
+            Cảnh báo gần nhất
+          </p>
           <div className="space-y-2 max-h-[280px] overflow-y-auto">
             {loading ? (
               [0, 1, 2].map((i) => (
                 <div key={i} className="rounded-lg border border-slate-100 p-3 space-y-2">
-                  <SkeletonLine w="60%" /><SkeletonLine w="90%" />
+                  <SkeletonLine w="60%" />
+                  <SkeletonLine w="90%" />
                 </div>
               ))
             ) : alerts.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 p-6 text-center text-slate-400 text-sm">
-                Không có cảnh báo trong cửa sổ 24h
+                Không có cảnh báo trong cửa sổ hiện tại
               </div>
             ) : (
               alerts.map((a) => (
                 <div key={a.id} className="rounded-lg border border-slate-100 p-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2 mb-1">
-                    <StatusBadge status={a.severity === "WARNING" ? "warning" : "error"}>{a.severity}</StatusBadge>
+                    <StatusBadge status={a.severity === "WARNING" ? "warning" : "error"}>
+                      {a.severity}
+                    </StatusBadge>
                     <span className="font-medium text-slate-700">{a.source}</span>
-                    <span className="text-slate-400 text-xs ml-auto">{new Date(a.created_at).toLocaleTimeString()}</span>
+                    <span className="text-slate-400 text-xs ml-auto">
+                      {new Date(a.created_at).toLocaleTimeString()}
+                    </span>
                   </div>
                   <p className="text-slate-600">{a.message}</p>
                 </div>
@@ -531,12 +540,80 @@ function SafetySection({ summary, loading, onDownload }: {
   );
 }
 
-// ── Main Page ──────────────────────────────────────────────────────────────────
+function BusinessInsightsSection({ summary, loading }: {
+  summary: AnalyticsSummary | null;
+  loading: boolean;
+}) {
+  const windowData = summary?.window;
+  const current = summary?.current;
+  const avgPersons =
+    (windowData?.samples ?? 0) > 0
+      ? (windowData?.person_observations ?? 0) / (windowData?.samples ?? 1)
+      : 0;
+
+  const insights = [
+    {
+      label: "Mức độ đông người",
+      value: avgPersons > 2 ? "Cao" : avgPersons > 0.8 ? "Trung bình" : "Thấp",
+      note: `${fmt(avgPersons, 2)} người / snapshot`,
+      icon: Users,
+      accent: "bg-teal-500",
+    },
+    {
+      label: "Tải perception",
+      value:
+        (windowData?.avg_ai_fps ?? 0) >= 20
+          ? "Ổn định"
+          : (windowData?.avg_ai_fps ?? 0) >= 12
+            ? "Dao động"
+            : "Căng tải",
+      note: `AI FPS avg ${fmt(windowData?.avg_ai_fps, 1)}`,
+      icon: Brain,
+      accent: "bg-violet-500",
+    },
+    {
+      label: "Xu hướng điều hướng",
+      value: current?.navigation_mode ?? "—",
+      note: "mode nổi bật hiện tại",
+      icon: TrendingUp,
+      accent: "bg-blue-500",
+    },
+  ];
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6">
+      <SectionHeader
+        icon={TrendingUp}
+        title="Nhận định Nghiệp vụ"
+        subtitle="đọc nhanh tình trạng vận hành từ dữ liệu analytics hiện có"
+        accent="bg-emerald-500"
+      />
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {insights.map((item) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.label} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className={`rounded-xl p-2 ${item.accent}`}>
+                  <Icon className="w-4 h-4 text-white" />
+                </div>
+                <p className="text-sm font-medium text-slate-700">{item.label}</p>
+              </div>
+              {loading ? <SkeletonLine w="90px" /> : (
+                <p className="text-xl font-bold text-slate-900">{item.value}</p>
+              )}
+              <p className="mt-2 text-xs text-slate-400">{item.note}</p>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function AnalyticsPage() {
   const [summary, setSummary] = useState<AnalyticsSummary | null>(null);
   const [series, setSeries] = useState<Snapshot[]>([]);
-  const [trials, setTrials] = useState<ExperimentTrial[]>([]);
-  const [totalTrials, setTotalTrials] = useState(0);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
@@ -545,18 +622,16 @@ export default function AnalyticsPage() {
   const load = useCallback(async (manual = false) => {
     if (manual) setRefreshing(true);
     try {
-      const [sumRes, serRes, trialRes] = await Promise.all([
+      const [sumRes, serRes] = await Promise.all([
         fetchWithAuth("/api/analytics/summary?hours=24"),
         fetchWithAuth("/api/analytics/timeseries?hours=6&limit=240"),
-        fetchWithAuth("/api/experiments/trials?limit=100")
       ]);
       setSummary((await sumRes.json()) as AnalyticsSummary);
       setSeries((await serRes.json()) as Snapshot[]);
-      const trialData = await trialRes.json() as ExperimentList;
-      setTrials(trialData.items || []);
-      setTotalTrials(trialData.total || 0);
       setLastUpdated(new Date());
-    } catch { /* keep stale */ } finally {
+    } catch {
+      // keep stale
+    } finally {
       setLoading(false);
       setRefreshing(false);
     }
@@ -575,29 +650,35 @@ export default function AnalyticsPage() {
         <div>
           <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Analytics Dashboard</h2>
           <p className="text-sm text-slate-500 mt-1">
-            Chỉ số thực nghiệm · Điều khiển · Perception · Dataset · Safety
+            Phân tích nghiệp vụ · vận hành robot · perception · cảnh báo · xu hướng thời gian thực
           </p>
         </div>
         <div className="flex items-center gap-3">
           <DownloadBtn
-            onClick={() => void download("/api/experiments/export/full", "experiment_results_full.csv")}
-            label="Export All CSV"
+            onClick={() => void download("/api/analytics/timeseries?hours=24&limit=1000", "analytics_timeseries.json")}
+            label="Export Timeseries"
           />
           <StatusBadge status={summary?.collector.running ? "success" : "warning"}>
             {summary?.collector.running ? "collector live" : "collector offline"}
           </StatusBadge>
-          <button onClick={() => void load(true)} disabled={refreshing} aria-label="Refresh"
-            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors disabled:opacity-50">
+          <button
+            onClick={() => void load(true)}
+            disabled={refreshing}
+            aria-label="Refresh"
+            className="flex items-center gap-1.5 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors disabled:opacity-50"
+          >
             <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`} />
             {lastUpdated ? lastUpdated.toLocaleTimeString() : "—"}
           </button>
         </div>
       </div>
-      <ControlSection summary={summary} series={series} trials={trials} loading={loading} onDownload={download} />
-      <PerceptionSection summary={summary} series={series} trials={trials} loading={loading} onDownload={download} />
-      <DatasetSection trials={trials} loading={loading} onDownload={download} />
-      <SafetySection summary={summary} loading={loading} onDownload={download} />
-      <ExperimentPanel trials={trials} total={totalTrials} loading={loading} download={download} />
+
+      <OverviewCards summary={summary} loading={loading} />
+      <BusinessInsightsSection summary={summary} loading={loading} />
+      <OperationsSection summary={summary} series={series} loading={loading} />
+      <PerceptionSection summary={summary} series={series} loading={loading} />
+      <ModeDistributionSection summary={summary} loading={loading} />
+      <AlertsSection summary={summary} loading={loading} />
     </div>
   );
 }
