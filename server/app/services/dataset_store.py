@@ -22,8 +22,6 @@ LABELS = ("STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "ERRATIC", "UNCE
 TRAINABLE_LABELS = ("STATIONARY", "APPROACHING", "DEPARTING", "CROSSING", "ERRATIC")
 LABEL_DIRS = {label: label.lower() for label in LABELS}
 
-MIN_SEQUENCE_FRAMES = 15
-MAX_SEQUENCE_FRAMES = 30
 MIN_DEPTH_VALID_RATIO = 0.10
 
 
@@ -210,12 +208,16 @@ def auto_label_active() -> dict[str, Any]:
     class_counts: Counter[str] = Counter()
     review_pending: Counter[str] = Counter()
     train_metadata: list[dict[str, Any]] = []
+    train_sequence_rows: list[dict[str, Any]] = []
 
     for seq_dir in seq_dirs:
         meta = _read_json(seq_dir / "meta.json")
-        heuristic = _heuristic_label(meta)
-        vlm = _maybe_vlm_label(seq_dir, meta, heuristic)
-        label = _reconcile_label(meta, heuristic, vlm)
+        label = _manual_label(seq_dir)
+        if not label:
+            heuristic = _heuristic_label(meta)
+            vlm = _maybe_vlm_label(seq_dir, meta, heuristic)
+            label = _reconcile_label(meta, heuristic, vlm)
+            label = _mark_auto_proposal(label)
         _write_json(seq_dir / "label.json", label)
 
         dest_seq_dir = sequence_out / seq_dir.parent.name / seq_dir.name
@@ -226,8 +228,9 @@ def auto_label_active() -> dict[str, Any]:
         if label["review_status"] == "needs_review":
             review_pending[label["primary_label"]] += 1
 
-        frame_rows = _export_training_frames(seq_dir, train_out, label)
-        train_metadata.extend(frame_rows)
+        export = _export_training_sequence(seq_dir, train_out, label)
+        train_metadata.extend(export["metadata_rows"])
+        train_sequence_rows.append(export["sequence_row"])
         sequence_rows.append(
             {
                 "sequence_id": _sequence_key(seq_dir),
@@ -240,6 +243,7 @@ def auto_label_active() -> dict[str, Any]:
         )
 
     _write_jsonl(train_out / "metadata.jsonl", train_metadata)
+    _write_jsonl(train_out / "sequence_manifest.jsonl", train_sequence_rows)
     train_manifest = _build_train_manifest(train_out, sequence_rows, class_counts, review_pending)
     _write_json(train_out / "manifest.json", train_manifest)
 
@@ -269,6 +273,38 @@ def auto_label_active() -> dict[str, Any]:
         "ready_for_training": train_manifest["ready_for_phase2_training"],
         "message": "Sequence-level auto-label completed",
     }
+
+
+def update_sequence_label(
+    sequence_id: str,
+    primary_label: str,
+    secondary_label: str | None = None,
+) -> dict[str, Any]:
+    current = status()
+    dataset_id = current.get("dataset_id")
+    if not dataset_id:
+        raise ValueError("Upload a raw sequence dataset before labeling")
+    seq_dir = _sequence_dir_from_key(_raw_dir(str(dataset_id)), sequence_id)
+    meta = _read_json(seq_dir / "meta.json")
+    primary = str(primary_label or "UNCERTAIN").strip().upper()
+    if primary not in LABELS:
+        raise ValueError(f"Unknown label: {primary_label}")
+    normalized_secondary = _normalize_secondary_label(primary, secondary_label, meta)
+    previous_label = _read_json(seq_dir / "label.json")
+    label = _label_payload(
+        primary,
+        normalized_secondary,
+        "human",
+        1.0,
+        "human_verified",
+        "manual label from rai_website",
+        _motion_features(meta),
+    )
+    if previous_label and previous_label.get("label_source") != "human":
+        label["auto_proposal"] = previous_label
+    _write_json(seq_dir / "label.json", label)
+    result = auto_label_active()
+    return {**result, "updated_sequence_id": sequence_id, "label": label}
 
 
 def _canonicalize_extracted(extracted: Path, raw_dir: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -364,32 +400,7 @@ def _split_track_rows(
     rows: list[dict[str, Any]],
     paths: list[Path],
 ) -> list[tuple[list[dict[str, Any]], list[Path]]]:
-    if len(rows) < MIN_SEQUENCE_FRAMES:
-        return [(rows, paths)]
-
-    states = [_rough_motion_state(rows, i) for i in range(len(rows))]
-    segments: list[tuple[int, int]] = []
-    start = 0
-    active = states[0]
-    for i, state_name in enumerate(states[1:], start=1):
-        if state_name != active and i - start >= MIN_SEQUENCE_FRAMES:
-            segments.append((start, i))
-            start = i
-            active = state_name
-    segments.append((start, len(rows)))
-
-    normalized: list[tuple[list[dict[str, Any]], list[Path]]] = []
-    for start, end in segments:
-        while end - start > MAX_SEQUENCE_FRAMES:
-            normalized.append((rows[start : start + MAX_SEQUENCE_FRAMES], paths[start : start + MAX_SEQUENCE_FRAMES]))
-            start += MAX_SEQUENCE_FRAMES
-        if end - start >= MIN_SEQUENCE_FRAMES:
-            normalized.append((rows[start:end], paths[start:end]))
-        elif normalized:
-            prev_rows, prev_paths = normalized[-1]
-            if len(prev_rows) + (end - start) <= MAX_SEQUENCE_FRAMES:
-                normalized[-1] = (prev_rows + rows[start:end], prev_paths + paths[start:end])
-    return normalized or [(rows, paths)]
+    return [(rows, paths)]
 
 
 def _write_sequence(
@@ -480,8 +491,8 @@ def _build_sequence_meta(
 
 def _quality_check(rows: list[dict[str, Any]], source_paths: list[Path]) -> dict[str, Any]:
     flags: list[str] = []
-    if len(rows) < MIN_SEQUENCE_FRAMES:
-        flags.append("too_short")
+    if len(rows) < 2:
+        flags.append("single_frame_track")
     missing_files = [path for path in source_paths if not path.exists() or path.stat().st_size <= 0]
     if missing_files:
         flags.append("missing_or_empty_frame")
@@ -506,14 +517,14 @@ def _quality_check(rows: list[dict[str, Any]], source_paths: list[Path]) -> dict
     if bad_bbox > 0.20:
         flags.append("bbox_crop_invalid")
 
-    reject = bool({"too_short", "missing_or_empty_frame", "bbox_jitter_high", "bbox_crop_invalid"} & set(flags))
+    reject = bool({"missing_or_empty_frame", "bbox_jitter_high", "bbox_crop_invalid"} & set(flags))
     return {"reject": reject, "flags": flags or ["ok"]}
 
 
 def _heuristic_label(meta: dict[str, Any]) -> dict[str, Any]:
     frame_count = int(meta.get("frame_count") or 0)
-    if frame_count < MIN_SEQUENCE_FRAMES:
-        return _label_payload("UNCERTAIN", None, "heuristic", 0.2, "needs_review", "sequence too short", {})
+    if frame_count < 2:
+        return _label_payload("UNCERTAIN", None, "heuristic", 0.2, "needs_review", "single-frame track", {})
 
     features = _motion_features(meta)
     depth_ratio = float(meta.get("depth_valid_ratio") or 0.0)
@@ -562,8 +573,6 @@ def _heuristic_label(meta: dict[str, Any]) -> dict[str, Any]:
 def _maybe_vlm_label(seq_dir: Path, meta: dict[str, Any], heuristic: dict[str, Any]) -> dict[str, Any] | None:
     if not settings.OLLAMA_URL or not settings.OLLAMA_VLM_MODEL:
         return None
-    if heuristic["primary_label"] not in {"UNCERTAIN", "ERRATIC"} and float(heuristic["confidence"]) >= 0.72:
-        return None
 
     frames = _sample_frames(_frame_paths(seq_dir), limit=12)
     images = []
@@ -577,11 +586,14 @@ def _maybe_vlm_label(seq_dir: Path, meta: dict[str, Any], heuristic: dict[str, A
 
     features = heuristic.get("features", {})
     prompt = (
-        "You label a short sequence of person ROI frames for robot navigation. "
-        "Use the image sequence plus numeric motion summary. Return strict JSON only with keys: "
+        "You are the VLM labeling agent for one tracked person ROI sequence. "
+        "Label the full visible lifetime of the track, not a single frame. "
+        "Use the ordered image sequence plus numeric motion summary. Return strict JSON only with keys: "
         "primary_label, secondary_label, confidence, notes. Valid primary labels are "
         "STATIONARY, APPROACHING, DEPARTING, CROSSING, ERRATIC, UNCERTAIN. "
-        "Use secondary_label crossing_left or crossing_right only for CROSSING.\n"
+        "Use secondary_label crossing_left or crossing_right only for CROSSING. "
+        "There is no FOLLOW/FOLLOWING class. If visual evidence is weak, choose UNCERTAIN.\n"
+        f"Heuristic proposal: {json.dumps(heuristic, ensure_ascii=True)}\n"
         f"Motion summary: {json.dumps(features, ensure_ascii=True)}"
     )
     response = _ollama_generate(settings.OLLAMA_VLM_MODEL, prompt, images=images)
@@ -598,34 +610,34 @@ def _reconcile_label(
     heuristic: dict[str, Any],
     vlm: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    llm = _llm_reconcile_label(meta, heuristic, vlm)
+    if llm:
+        disagreement = _has_label_disagreement(heuristic, vlm, llm)
+        llm["heuristic"] = heuristic
+        llm["vlm"] = vlm
+        llm["labeling_agents"] = {
+            "heuristic": True,
+            "vlm": vlm is not None,
+            "llm": True,
+        }
+        return _with_review_policy(llm, disagreement=disagreement)
+
     if not vlm:
+        heuristic["labeling_agents"] = {"heuristic": True, "vlm": False, "llm": False}
         return heuristic
     if vlm["primary_label"] == heuristic["primary_label"]:
         confidence = max(float(heuristic["confidence"]), float(vlm["confidence"]))
         result = {**heuristic, "confidence": round(min(0.97, confidence), 3)}
         result["label_source"] = "heuristic+vlm"
         result["notes"] = f"{heuristic.get('notes', '')}; VLM agrees"
+        result["heuristic"] = heuristic
+        result["vlm"] = vlm
+        result["labeling_agents"] = {"heuristic": True, "vlm": True, "llm": False}
         return _with_review_policy(result, disagreement=False)
-
-    if settings.OLLAMA_LLM_MODEL:
-        prompt = (
-            "Resolve a sequence-level motion label disagreement for robot navigation. "
-            "Return strict JSON only with keys primary_label, secondary_label, confidence, notes. "
-            f"Valid primary labels: {', '.join(LABELS)}.\n"
-            f"Heuristic: {json.dumps(heuristic, ensure_ascii=True)}\n"
-            f"VLM: {json.dumps(vlm, ensure_ascii=True)}\n"
-            f"Meta summary: {json.dumps(_sequence_summary(meta), ensure_ascii=True)}"
-        )
-        response = _ollama_generate(settings.OLLAMA_LLM_MODEL, prompt)
-        parsed = _parse_json_object(response) if response else None
-        if parsed:
-            resolved = _normalize_model_label(parsed, "llm")
-            resolved["heuristic"] = heuristic
-            resolved["vlm"] = vlm
-            return _with_review_policy(resolved, disagreement=True)
 
     if float(heuristic["confidence"]) < 0.65 and float(vlm["confidence"]) >= 0.70:
         result = {**vlm, "heuristic": heuristic, "vlm": vlm}
+        result["labeling_agents"] = {"heuristic": True, "vlm": True, "llm": False}
         return _with_review_policy(result, disagreement=True)
     result = _label_payload(
         "UNCERTAIN",
@@ -638,50 +650,166 @@ def _reconcile_label(
     )
     result["heuristic"] = heuristic
     result["vlm"] = vlm
+    result["labeling_agents"] = {"heuristic": True, "vlm": True, "llm": False}
     return result
 
 
-def _export_training_frames(seq_dir: Path, train_out: Path, label: dict[str, Any]) -> list[dict[str, Any]]:
+def _llm_reconcile_label(
+    meta: dict[str, Any],
+    heuristic: dict[str, Any],
+    vlm: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not settings.OLLAMA_URL or not settings.OLLAMA_LLM_MODEL:
+        return None
+
+    source = "heuristic+vlm+llm" if vlm else "heuristic+llm"
+    prompt = (
+        "You are the LLM arbitration agent for robot intent labeling. "
+        "Use the heuristic motion/depth proposal, the VLM visual proposal when present, "
+        "and the metadata summary to choose the final automatic label for the whole K-frame track. "
+        "Return strict JSON only with keys primary_label, secondary_label, confidence, notes. "
+        f"Valid primary labels: {', '.join(LABELS)}. "
+        "Use secondary_label crossing_left or crossing_right only for CROSSING. "
+        "There is no FOLLOW/FOLLOWING class; ambiguous residual motion must be UNCERTAIN.\n"
+        f"Heuristic proposal: {json.dumps(heuristic, ensure_ascii=True)}\n"
+        f"VLM proposal: {json.dumps(vlm, ensure_ascii=True) if vlm else 'null'}\n"
+        f"Meta summary: {json.dumps(_sequence_summary(meta), ensure_ascii=True)}"
+    )
+    response = _ollama_generate(settings.OLLAMA_LLM_MODEL, prompt)
+    parsed = _parse_json_object(response) if response else None
+    if not parsed:
+        return None
+    resolved = _normalize_model_label(parsed, source)
+    resolved["llm_raw"] = parsed
+    return resolved
+
+
+def _has_label_disagreement(
+    heuristic: dict[str, Any],
+    vlm: dict[str, Any] | None,
+    final_label: dict[str, Any],
+) -> bool:
+    labels = {
+        (
+            str(heuristic.get("primary_label") or "UNCERTAIN"),
+            str(heuristic.get("secondary_label") or ""),
+        ),
+        (
+            str(final_label.get("primary_label") or "UNCERTAIN"),
+            str(final_label.get("secondary_label") or ""),
+        ),
+    }
+    if vlm:
+        labels.add(
+            (
+                str(vlm.get("primary_label") or "UNCERTAIN"),
+                str(vlm.get("secondary_label") or ""),
+            )
+        )
+    return len(labels) > 1
+
+
+def _manual_label(seq_dir: Path) -> dict[str, Any] | None:
+    label = _read_json(seq_dir / "label.json")
+    primary = str(label.get("primary_label") or "").upper()
+    if primary not in LABELS:
+        return None
+    if label.get("label_source") == "human" or label.get("review_status") == "human_verified":
+        return label
+    return None
+
+
+def _mark_auto_proposal(label: dict[str, Any]) -> dict[str, Any]:
+    result = dict(label)
+    result["review_status"] = "needs_review"
+    result["human_final_required"] = True
+    return result
+
+
+def _export_training_sequence(seq_dir: Path, train_out: Path, label: dict[str, Any]) -> dict[str, Any]:
     primary = label["primary_label"]
     label_dir = LABEL_DIRS[primary]
-    dest_dir = train_out / label_dir
-    dest_dir.mkdir(parents=True, exist_ok=True)
+    preview_dir = train_out / label_dir
+    preview_dir.mkdir(parents=True, exist_ok=True)
     meta = _read_json(seq_dir / "meta.json")
-    rows = []
-    for index, frame in enumerate(_frame_paths(seq_dir), start=1):
-        dest_name = f"{seq_dir.parent.name}_{seq_dir.name}_f{index:04d}.jpg"
-        dest_path = dest_dir / dest_name
+    frames = _frame_paths(seq_dir)
+    sequence_id = _sequence_key(seq_dir)
+    track_dir = train_out / "_tracks" / sequence_id
+    track_dir.mkdir(parents=True, exist_ok=True)
+    frame_files: list[str] = []
+    for index, frame in enumerate(frames, start=1):
+        dest_name = f"f{index:04d}.jpg"
+        dest_path = track_dir / dest_name
         shutil.copy2(frame, dest_path)
-        row = {
-            "file": f"{label_dir}/{dest_name}",
-            "source_sequence": _sequence_key(seq_dir),
-            "label": primary,
-            "secondary_label": label.get("secondary_label"),
-            "label_source": label.get("label_source"),
-            "confidence": label.get("confidence"),
-            "review_status": label.get("review_status"),
-            "review_required": label.get("review_status") == "needs_review",
-            "track_uid": _sequence_key(seq_dir),
-            "session_id": meta.get("session_id"),
-            "track_id": meta.get("track_id"),
-            "frame_id": _array_get(meta.get("frame_ids"), index - 1, index),
-            "sequence_frame_index": index,
-            "cx": _array_get(meta.get("cx"), index - 1, None),
-            "cy": _array_get(meta.get("cy"), index - 1, None),
-            "bw": _array_get(meta.get("bw"), index - 1, None),
-            "bh": _array_get(meta.get("bh"), index - 1, None),
-            "dist_mm": _array_get(meta.get("dist_mm"), index - 1, None),
-            "vx": _array_get(meta.get("vx"), index - 1, 0.0),
-            "vy": _array_get(meta.get("vy"), index - 1, 0.0),
-            "vtheta": _array_get(meta.get("vtheta"), index - 1, 0.0),
-        }
-        rows.append(row)
+        frame_files.append(f"_tracks/{sequence_id}/{dest_name}")
+
+    preview_rows: list[dict[str, Any]] = []
+    if frames:
+        preview_index = min(len(frames) - 1, max(0, len(frames) // 2))
+        preview_name = f"{sequence_id}.jpg"
+        preview_path = preview_dir / preview_name
+        shutil.copy2(frames[preview_index], preview_path)
+        preview_rows.append(
+            {
+                "file": f"{label_dir}/{preview_name}",
+                "source_sequence": sequence_id,
+                "label": primary,
+                "secondary_label": label.get("secondary_label"),
+                "label_source": label.get("label_source"),
+                "confidence": label.get("confidence"),
+                "review_status": label.get("review_status"),
+                "review_required": label.get("review_status") == "needs_review",
+                "sample_type": "track_representative",
+                "frame_count": len(frames),
+                "track_uid": sequence_id,
+                "session_id": meta.get("session_id"),
+                "track_id": meta.get("track_id"),
+                "frame_id": _array_get(meta.get("frame_ids"), preview_index, preview_index + 1),
+                "sequence_frame_index": preview_index + 1,
+                "cx": _array_get(meta.get("cx"), preview_index, None),
+                "cy": _array_get(meta.get("cy"), preview_index, None),
+                "bw": _array_get(meta.get("bw"), preview_index, None),
+                "bh": _array_get(meta.get("bh"), preview_index, None),
+                "dist_mm": _array_get(meta.get("dist_mm"), preview_index, None),
+                "vx": _array_get(meta.get("vx"), preview_index, 0.0),
+                "vy": _array_get(meta.get("vy"), preview_index, 0.0),
+                "vtheta": _array_get(meta.get("vtheta"), preview_index, 0.0),
+            }
+        )
+
+    dx, dy = _direction_for_label(primary, label.get("secondary_label"), meta)
+    frame_ids = meta.get("frame_ids") if isinstance(meta.get("frame_ids"), list) else []
+    timestamps = meta.get("timestamps") if isinstance(meta.get("timestamps"), list) else []
+    sequence_row = {
+        "sequence_id": sequence_id,
+        "files": frame_files,
+        "label": primary,
+        "secondary_label": label.get("secondary_label"),
+        "label_source": label.get("label_source"),
+        "confidence": label.get("confidence"),
+        "review_status": label.get("review_status"),
+        "review_required": label.get("review_status") == "needs_review",
+        "frame_count": len(frame_files),
+        "sample_policy": "whole_track_k",
+        "track_uid": sequence_id,
+        "session_id": meta.get("session_id"),
+        "track_id": meta.get("track_id"),
+        "start_frame_id": frame_ids[0] if frame_ids else 1,
+        "end_frame_id": frame_ids[-1] if frame_ids else len(frame_files),
+        "start_ts": timestamps[0] if timestamps else None,
+        "end_ts": timestamps[-1] if timestamps else None,
+        "depth_valid_ratio": meta.get("depth_valid_ratio", 0),
+        "dx": dx,
+        "dy": dy,
+        "schema": "intent_sequence_v1",
+    }
+
     if label.get("review_status") == "needs_review":
         review_dir = train_out / "review_queue" / label_dir
         review_dir.mkdir(parents=True, exist_ok=True)
-        first_frame = _frame_paths(seq_dir)[0]
-        shutil.copy2(first_frame, review_dir / f"{seq_dir.parent.name}_{seq_dir.name}.jpg")
-    return rows
+        if frames:
+            shutil.copy2(frames[0], review_dir / f"{sequence_id}.jpg")
+    return {"metadata_rows": preview_rows, "sequence_row": sequence_row}
 
 
 def _build_train_manifest(
@@ -690,30 +818,36 @@ def _build_train_manifest(
     class_counts: Counter[str],
     review_pending: Counter[str],
 ) -> dict[str, Any]:
+    sequence_label_counts = Counter()
     frame_counts = Counter()
-    for row in _read_jsonl(train_out / "metadata.jsonl"):
-        frame_counts[str(row.get("label") or "UNCERTAIN")] += 1
-    trainable_frames = sum(frame_counts[label] for label in TRAINABLE_LABELS)
+    for row in _read_jsonl(train_out / "sequence_manifest.jsonl"):
+        label = str(row.get("label") or "UNCERTAIN")
+        sequence_label_counts[label] += 1
+        frame_counts[label] += int(row.get("frame_count") or len(row.get("files") or []))
+    trainable_sequences = sum(sequence_label_counts[label] for label in TRAINABLE_LABELS)
+    pending_review_total = sum(review_pending.values())
     ready = (
-        trainable_frames >= 1
-        and review_pending.get("ERRATIC", 0) == 0
-        and any(frame_counts[label] for label in TRAINABLE_LABELS)
+        trainable_sequences >= 1
+        and pending_review_total == 0
+        and any(sequence_label_counts[label] for label in TRAINABLE_LABELS)
     )
     return {
         "generated_at": int(time.time()),
         "dataset": str(train_out),
-        "schema": "intent_sequence_frame_export_v1",
+        "schema": "intent_sequence_export_v1",
         "ontology": {
             "runtime_intents": list(LABELS),
             "trainable_intents": list(TRAINABLE_LABELS),
         },
         "sequence_count": len(sequence_rows),
         "class_counts": dict(class_counts),
+        "sequence_label_counts": dict(sequence_label_counts),
         "frame_counts": dict(frame_counts),
         "review_pending": dict(review_pending),
         "ready_for_phase2_training": ready,
         "gates": {
-            "has_trainable_frames": trainable_frames >= 1,
+            "has_trainable_sequences": trainable_sequences >= 1,
+            "human_review_done": pending_review_total == 0,
             "erratic_review_done": review_pending.get("ERRATIC", 0) == 0,
         },
     }
@@ -747,6 +881,35 @@ def _motion_features(meta: dict[str, Any]) -> dict[str, float]:
         "erratic_score": round(float(erratic_score), 3),
         "depth_valid_ratio": round(float(meta.get("depth_valid_ratio") or 0.0), 3),
     }
+
+
+def _normalize_secondary_label(
+    primary: str,
+    secondary: str | None,
+    meta: dict[str, Any],
+) -> str | None:
+    if primary != "CROSSING":
+        return None
+    value = str(secondary or "").strip().lower()
+    if value in {"crossing_left", "crossing_right"}:
+        return value
+    features = _motion_features(meta)
+    return "crossing_right" if features["cx_slope_px_s"] >= 0 else "crossing_left"
+
+
+def _direction_for_label(
+    primary: str,
+    secondary: str | None,
+    meta: dict[str, Any],
+) -> tuple[float, float]:
+    if primary == "APPROACHING":
+        return 0.0, -0.6
+    if primary == "DEPARTING":
+        return 0.0, 0.6
+    if primary == "CROSSING":
+        resolved = _normalize_secondary_label(primary, secondary, meta)
+        return (-0.8 if resolved == "crossing_left" else 0.8), 0.0
+    return 0.0, 0.0
 
 
 def _rough_motion_state(rows: list[dict[str, Any]], index: int) -> str:
