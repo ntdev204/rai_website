@@ -1,7 +1,8 @@
 """Dataset APIs.
 
-Jetson endpoints still control raw collection on the robot. Server endpoints
-own the upload -> sequence ingest -> auto-label -> train-ready dataset flow.
+Adaptive-context-aware removed the old on-Jetson collection HTTP endpoints.
+Server endpoints own the upload -> sequence ingest -> auto-label -> train-ready
+dataset flow.
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ async def download_collection():
         headers={
             "Content-Disposition": headers.get(
                 "content-disposition",
-                'attachment; filename="context_aware_dataset.zip"',
+                'attachment; filename="adaptive_context_aware_dataset.zip"',
             )
         },
     )
@@ -213,4 +214,4 @@ def _raise_proxy_error(result: dict):
 
 def _filename_from_disposition(disposition: str) -> str:
     match = re.search(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', disposition or "")
-    return match.group(1) if match else "context_aware_robot_collection.zip"
+    return match.group(1) if match else "adaptive_context_aware_robot_collection.zip"

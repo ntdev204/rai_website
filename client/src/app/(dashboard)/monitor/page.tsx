@@ -21,17 +21,30 @@ interface DetectionPayload {
   frame_id?: number;
   mode?: string;
   inference_ms?: number;
+  connected?: boolean;
+  source_id?: string;
   persons?: DetectionItem[];
   obstacles?: DetectionItem[];
+  entities?: DetectionItem[];
 }
 
 interface MetricsPayload {
+  state?: string;
+  ready?: boolean;
+  reason?: string | null;
   fps?: number;
   inference_ms?: number;
   mode?: string;
-  mode_override?: string | null;
   persons?: number;
   obstacles?: number;
+  result_connected?: boolean;
+  result_sequence?: number;
+  adaptive_metrics?: {
+    camera_latency_ms?: number;
+    detector_latency_ms?: number;
+    fusion_latency_ms?: number;
+    total_latency_ms?: number;
+  };
 }
 
 interface DatasetStatus {
@@ -170,7 +183,7 @@ export default function MonitorPage() {
     const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
     const link = document.createElement("a");
     link.href = url;
-    link.download = decodeURIComponent(match?.[1] ?? "context_aware_raw_sequences.zip");
+    link.download = decodeURIComponent(match?.[1] ?? "adaptive_context_aware_raw_sequences.zip");
     document.body.appendChild(link);
     link.click();
     link.remove();
@@ -227,13 +240,13 @@ export default function MonitorPage() {
           <section className="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-800 mb-4">
               <Radio className="w-4 h-4 text-blue-600" />
-              AI State
+              Adaptive Runtime
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
               <Metric label="FPS" value={formatValue(metrics.fps)} />
-              <Metric label="Inference" value={`${formatValue(metrics.inference_ms ?? detections.inference_ms)} ms`} />
-              <Metric label="Mode" value={metrics.mode ?? detections.mode ?? "-"} />
-              <Metric label="Override" value={metrics.mode_override ?? "-"} />
+              <Metric label="Latency" value={`${formatValue(metrics.inference_ms ?? detections.inference_ms)} ms`} />
+              <Metric label="State" value={metrics.state ?? metrics.mode ?? detections.mode ?? "-"} />
+              <Metric label="Ready" value={metrics.ready ? "yes" : (metrics.reason ?? "-")} />
             </div>
           </section>
 
@@ -243,10 +256,10 @@ export default function MonitorPage() {
               Detection Summary
             </div>
             <div className="grid grid-cols-2 gap-3 text-sm">
-              <Metric label="Persons" value={String(persons.length)} />
+              <Metric label="Entities" value={String((detections.entities ?? persons).length)} />
               <Metric label="Obstacles" value={String(obstacles.length)} />
-              <Metric label="Frame" value={String(detections.frame_id ?? "-")} />
-              <Metric label="Status" value={hasFrame ? "streaming" : "waiting"} />
+              <Metric label="Result Seq" value={String(metrics.result_sequence ?? detections.frame_id ?? "-")} />
+              <Metric label="Result Plane" value={(metrics.result_connected ?? detections.connected) ? "connected" : "waiting"} />
             </div>
           </section>
 

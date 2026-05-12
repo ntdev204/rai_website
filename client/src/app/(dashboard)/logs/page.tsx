@@ -24,7 +24,7 @@ interface EventLog {
 
 const sources = [
   { label: "All sources", value: "" },
-  { label: "context-aware", value: "context-aware" },
+  { label: "adaptive-context-aware", value: "adaptive-context-aware" },
   { label: "wheeltec_ros2", value: "wheeltec_ros2" },
   { label: "rai_website.server", value: "rai_website.server" },
   { label: "rai_website.client", value: "rai_website.client" },

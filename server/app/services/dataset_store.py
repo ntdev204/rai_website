@@ -180,7 +180,7 @@ def build_archive(kind: str = "labeled") -> tuple[Path, str]:
         for path in sorted(source.rglob("*")):
             if path.is_file():
                 archive.write(path, Path(dataset_id) / path.relative_to(source))
-    return zip_path, f"context_aware_{dataset_id}_{kind}.zip"
+    return zip_path, f"adaptive_context_aware_{dataset_id}_{kind}.zip"
 
 
 def auto_label_active() -> dict[str, Any]:
