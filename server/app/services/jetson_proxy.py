@@ -1,4 +1,4 @@
-"""Jetson adaptive-context-aware control-plane proxy.
+"""Adaptive-context-aware control-plane proxy.
 
 The new adaptive runtime exposes a small FastAPI control API:
 ``/health``, ``/ready``, ``/metrics``, ``/config``, ``/control/start`` and
@@ -26,16 +26,20 @@ _client: httpx.AsyncClient | None = None
 async def start_jetson_proxy() -> None:
     global _client
     _client = httpx.AsyncClient(
-        base_url=settings.JETSON_API_URL,
+        base_url=settings.adaptive_api_url,
         timeout=httpx.Timeout(connect=2.0, read=5.0, write=2.0, pool=5.0),
     )
-    logger.info("Adaptive Jetson proxy client started: %s", settings.JETSON_API_URL)
+    logger.info("Adaptive laptop runtime proxy client started: %s", settings.adaptive_api_url)
 
 
 async def stop_jetson_proxy() -> None:
     if _client:
         await _client.aclose()
-    logger.info("Adaptive Jetson proxy client closed")
+    logger.info("Adaptive laptop runtime proxy client closed")
+
+
+start_adaptive_proxy = start_jetson_proxy
+stop_adaptive_proxy = stop_jetson_proxy
 
 
 async def get_health() -> dict[str, Any]:
@@ -216,7 +220,7 @@ async def dataset_delete_image(index: int) -> dict[str, Any]:
 
 
 async def dataset_autolabel() -> dict[str, Any]:
-    return {"error": "Jetson auto-label is unavailable. Use server auto-label."}
+    return {"error": "Runtime auto-label is unavailable. Use server auto-label."}
 
 
 async def dataset_preview(index: int) -> tuple[bytes, str]:
@@ -239,14 +243,14 @@ async def stream_mjpeg_frames():
 
 async def _request_json(method: str, path: str, *, fallback: dict[str, Any]) -> dict[str, Any]:
     if _client is None:
-        return {**fallback, "error": "Jetson proxy client is not started"}
+        return {**fallback, "error": "Adaptive runtime proxy client is not started"}
     try:
         response = await _client.request(method, path)
         response.raise_for_status()
         data = response.json()
         return data if isinstance(data, dict) else fallback
     except Exception as exc:
-        logger.warning("Adaptive Jetson %s %s failed: %s", method, path, exc)
+        logger.warning("Adaptive runtime %s %s failed: %s", method, path, exc)
         return {**fallback, "error": str(exc)}
 
 

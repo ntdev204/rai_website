@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.analytics_snapshot import AnalyticsSnapshot
 from app.models.event_log import EventLog
-from app.services import jetson_proxy
+from app.services import adaptive_proxy
 from app.services.log_service import log_event
 from app.services.zmq_bridge import get_latest_telemetry
 
@@ -54,7 +54,7 @@ async def stop_analytics_collector() -> None:
 
 async def collect_snapshot() -> dict[str, Any]:
     telemetry = await get_latest_telemetry()
-    ai_metrics = await jetson_proxy.get_metrics()
+    ai_metrics = await adaptive_proxy.get_metrics()
     snapshot = _build_snapshot(telemetry, ai_metrics)
 
     async with AsyncSessionLocal() as db:

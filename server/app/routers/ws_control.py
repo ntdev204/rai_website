@@ -18,7 +18,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from app.middleware.auth import verify_ws_token
 from app.services.zmq_bridge import send_teleop_cmd
-from app.services import jetson_proxy
+from app.services import adaptive_proxy
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 logger = logging.getLogger(__name__)
@@ -110,11 +110,11 @@ async def ws_control(websocket: WebSocket, token: str = Query(default="")):
                         )
                     )
                     continue
-                result = await jetson_proxy.set_mode(mode)
+                result = await adaptive_proxy.set_mode(mode)
                 await websocket.send_text(json.dumps(result))
 
             elif msg_type == "clear_mode":
-                result = await jetson_proxy.clear_mode()
+                result = await adaptive_proxy.clear_mode()
                 await websocket.send_text(json.dumps(result))
 
             elif msg_type == "stop":
@@ -122,7 +122,7 @@ async def ws_control(websocket: WebSocket, token: str = Query(default="")):
                 latest_cmd["linear_y"] = 0.0
                 latest_cmd["angular_z"] = 0.0
                 cmd_event.set()
-                result = await jetson_proxy.force_stop()
+                result = await adaptive_proxy.force_stop()
                 await websocket.send_text(json.dumps(result))
 
     except WebSocketDisconnect:

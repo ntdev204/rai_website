@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.models.event_log import EventLog
-from app.services import jetson_proxy
+from app.services import adaptive_proxy
 from app.services.runtime_log_buffer import get_runtime_logs
 from app.services.zmq_bridge import send_scada_command
 
@@ -129,7 +129,7 @@ async def _database_logs(
 
 
 async def _adaptive_context_aware_logs(limit: int) -> list[dict[str, Any]]:
-    result = await jetson_proxy.get_logs(limit=limit)
+    result = await adaptive_proxy.get_logs(limit=limit)
     if not isinstance(result, dict):
         return []
     if "error" in result:

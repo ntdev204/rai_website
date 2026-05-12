@@ -2,7 +2,7 @@
 
 The adaptive runtime publishes protobuf ``PerceptionResultEnvelope`` messages
 over ZMQ PUB. The dashboard keeps only the latest decoded snapshot so REST and
-WebSocket handlers can expose it without polling the Jetson control API.
+WebSocket handlers can expose it without polling the adaptive control API.
 """
 
 from __future__ import annotations
@@ -168,8 +168,8 @@ def _adaptive_result_host() -> str:
     explicit = settings.ADAPTIVE_RESULT_HOST.strip()
     if explicit:
         return explicit
-    parsed = urlparse(settings.JETSON_API_URL)
-    return parsed.hostname or "25.12.4.100"
+    parsed = urlparse(settings.adaptive_api_url)
+    return parsed.hostname or "127.0.0.1"
 
 
 def _result_message_classes():

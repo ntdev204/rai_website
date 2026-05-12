@@ -1,6 +1,6 @@
 """Dataset APIs.
 
-Adaptive-context-aware removed the old on-Jetson collection HTTP endpoints.
+Adaptive-context-aware removed the old on-runtime collection HTTP endpoints.
 Server endpoints own the upload -> sequence ingest -> auto-label -> train-ready
 dataset flow.
 """
@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
 from app.middleware.auth import get_current_operator
-from app.services import dataset_store, jetson_proxy
+from app.services import adaptive_proxy, dataset_store
 
 router = APIRouter(
     prefix="/api/datasets",
@@ -35,47 +35,47 @@ class SequenceLabelRequest(BaseModel):
 
 @router.get("/collection")
 async def collection_status():
-    return await jetson_proxy.dataset_status()
+    return await adaptive_proxy.dataset_status()
 
 
 @router.post("/collection/start")
 async def start_collection(body: DatasetStartRequest):
-    result = await jetson_proxy.dataset_start(body.mode)
+    result = await adaptive_proxy.dataset_start(body.mode)
     _raise_proxy_error(result)
     return result
 
 
 @router.post("/collection/stop")
 async def stop_collection():
-    result = await jetson_proxy.dataset_stop()
+    result = await adaptive_proxy.dataset_stop()
     _raise_proxy_error(result)
     return result
 
 
 @router.delete("/collection")
 async def discard_collection():
-    result = await jetson_proxy.dataset_discard()
+    result = await adaptive_proxy.dataset_discard()
     _raise_proxy_error(result)
     return result
 
 
 @router.post("/collection/save")
 async def save_collection():
-    result = await jetson_proxy.dataset_save()
+    result = await adaptive_proxy.dataset_save()
     _raise_proxy_error(result)
     return result
 
 
 @router.get("/collection/images")
 async def collection_images():
-    result = await jetson_proxy.dataset_images()
+    result = await adaptive_proxy.dataset_images()
     _raise_proxy_error(result)
     return result
 
 
 @router.delete("/collection/images/{index}")
 async def delete_collection_image(index: int):
-    result = await jetson_proxy.dataset_delete_image(index)
+    result = await adaptive_proxy.dataset_delete_image(index)
     _raise_proxy_error(result)
     return result
 
@@ -84,14 +84,14 @@ async def delete_collection_image(index: int):
 async def autolabel_collection():
     raise HTTPException(
         status_code=410,
-        detail="Jetson auto-label is disabled. Download the raw collection, upload it here, then run server auto-label.",
+        detail="Runtime auto-label is disabled. Download the raw collection, upload it here, then run server auto-label.",
     )
 
 
 @router.get("/collection/preview/{index}")
 async def preview_frame(index: int):
     try:
-        content, media_type = await jetson_proxy.dataset_preview(index)
+        content, media_type = await adaptive_proxy.dataset_preview(index)
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(content=content, media_type=media_type)
@@ -100,7 +100,7 @@ async def preview_frame(index: int):
 @router.get("/collection/download")
 async def download_collection():
     try:
-        stream, headers = await jetson_proxy.dataset_download()
+        stream, headers = await adaptive_proxy.dataset_download()
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return StreamingResponse(
@@ -127,7 +127,7 @@ async def _close_stream(stream) -> None:
 @router.post("/collection/import-latest")
 async def import_latest_collection():
     try:
-        stream, headers = await jetson_proxy.dataset_download()
+        stream, headers = await adaptive_proxy.dataset_download()
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 

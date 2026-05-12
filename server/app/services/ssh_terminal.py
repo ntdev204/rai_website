@@ -18,12 +18,12 @@ class SshTarget:
 def get_available_targets() -> dict[str, SshTarget]:
     targets: dict[str, SshTarget] = {}
 
-    if settings.SSH_JETSON_HOST and settings.SSH_JETSON_USER:
-        targets["jetson"] = SshTarget(
-            name="jetson",
-            host=settings.SSH_JETSON_HOST,
-            port=settings.SSH_JETSON_PORT,
-            user=settings.SSH_JETSON_USER,
+    if settings.ssh_laptop_host and settings.ssh_laptop_user:
+        targets["laptop"] = SshTarget(
+            name="laptop",
+            host=settings.ssh_laptop_host,
+            port=settings.ssh_laptop_port,
+            user=settings.ssh_laptop_user,
         )
 
     if settings.SSH_RASPI_HOST and settings.SSH_RASPI_USER:

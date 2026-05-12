@@ -21,7 +21,8 @@ class Settings(BaseSettings):
     ZMQ_TELEMETRY_PORT: int = 5556
     ZMQ_CAMERA_PORT: int = 5557
     
-    JETSON_API_URL: str = "http://25.12.4.100:8080"
+    ADAPTIVE_API_URL: str = ""
+    JETSON_API_URL: str = ""
     ADAPTIVE_RESULT_HOST: str = ""
     ADAPTIVE_RESULT_PORT: int = 5556
     ADAPTIVE_RESULT_ENABLED: bool = True
@@ -39,6 +40,9 @@ class Settings(BaseSettings):
     OLLAMA_VLM_MODEL: str = ""
     OLLAMA_LLM_MODEL: str = "llama3.1"
     SSH_ENABLED: bool = False
+    SSH_LAPTOP_HOST: str = ""
+    SSH_LAPTOP_PORT: int = 22
+    SSH_LAPTOP_USER: str = ""
     SSH_JETSON_HOST: str = ""
     SSH_JETSON_PORT: int = 22
     SSH_JETSON_USER: str = ""
@@ -46,6 +50,24 @@ class Settings(BaseSettings):
     SSH_RASPI_PORT: int = 22
     SSH_RASPI_USER: str = ""
     SSH_CONNECT_TIMEOUT_SEC: float = 10.0
+
+    @property
+    def adaptive_api_url(self) -> str:
+        return self.ADAPTIVE_API_URL or self.JETSON_API_URL or "http://localhost:8080"
+
+    @property
+    def ssh_laptop_host(self) -> str:
+        return self.SSH_LAPTOP_HOST or self.SSH_JETSON_HOST
+
+    @property
+    def ssh_laptop_port(self) -> int:
+        if self.SSH_LAPTOP_HOST or self.SSH_LAPTOP_USER:
+            return self.SSH_LAPTOP_PORT
+        return self.SSH_JETSON_PORT
+
+    @property
+    def ssh_laptop_user(self) -> str:
+        return self.SSH_LAPTOP_USER or self.SSH_JETSON_USER
     
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
