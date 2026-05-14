@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import AsyncSessionLocal
 from app.models.event_log import EventLog
-from app.services import jetson_proxy
+from app.services import adaptive_proxy
 from app.services.runtime_log_buffer import get_runtime_logs
 from app.services.zmq_bridge import send_scada_command
 
@@ -77,7 +77,7 @@ async def list_aggregated_logs(
     logs.extend(_filter_logs(get_runtime_logs(limit), normalized_severity, source, event_type, query))
 
     if include_external:
-        context_task = asyncio.create_task(_context_aware_logs(limit))
+        context_task = asyncio.create_task(_adaptive_context_aware_logs(limit))
         scada_task = asyncio.create_task(_wheeltec_logs(limit))
         external_results = await asyncio.gather(context_task, scada_task, return_exceptions=True)
         for result in external_results:
@@ -128,16 +128,16 @@ async def _database_logs(
     return entries
 
 
-async def _context_aware_logs(limit: int) -> list[dict[str, Any]]:
-    result = await jetson_proxy.get_logs(limit=limit)
+async def _adaptive_context_aware_logs(limit: int) -> list[dict[str, Any]]:
+    result = await adaptive_proxy.get_logs(limit=limit)
     if not isinstance(result, dict):
         return []
     if "error" in result:
-        return [_diagnostic_log("context-aware", "WARNING", result["error"])]
+        return [_diagnostic_log("adaptive-context-aware", "WARNING", result["error"])]
     raw_logs = result.get("logs")
     if not isinstance(raw_logs, list):
         return []
-    return [_normalize_external_log(item, "context-aware") for item in raw_logs if isinstance(item, dict)]
+    return [_normalize_external_log(item, "adaptive-context-aware") for item in raw_logs if isinstance(item, dict)]
 
 
 async def _wheeltec_logs(limit: int) -> list[dict[str, Any]]:

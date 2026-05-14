@@ -303,7 +303,7 @@ export default function DatasetPage() {
       const match = disposition.match(/filename\*?=(?:UTF-8'')?"?([^";]+)"?/i);
       const link = document.createElement("a");
       link.href = url;
-      link.download = decodeURIComponent(match?.[1] ?? `context_aware_${kind}_dataset.zip`);
+      link.download = decodeURIComponent(match?.[1] ?? `adaptive_context_aware_${kind}_dataset.zip`);
       document.body.appendChild(link);
       link.click();
       link.remove();

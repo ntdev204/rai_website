@@ -650,7 +650,7 @@ export default function AnalyticsPage() {
         <div>
           <h2 className="text-2xl font-bold text-slate-800 tracking-tight">Analytics Dashboard</h2>
           <p className="text-sm text-slate-500 mt-1">
-            Phân tích nghiệp vụ · vận hành robot · perception · cảnh báo · xu hướng thời gian thực
+            Adaptive-context-aware · vận hành robot · perception · cảnh báo · xu hướng thời gian thực
           </p>
         </div>
         <div className="flex items-center gap-3">

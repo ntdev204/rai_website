@@ -4,8 +4,8 @@ Flow:
     Client WS → POST json {type, linear, angular}
     → ZMQ Bridge REQ/REP JSON → Pi SCADA → /cmd_vel_keyboard → twist_mux
 
-Only authenticated users can connect. FOLLOW is not accepted because camera-based
-person following has been removed from the Jetson pipeline.
+Only authenticated users can connect. Legacy context-aware mode overrides are
+not accepted because adaptive-context-aware exposes start/stop runtime control.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query
 from app.middleware.auth import verify_ws_token
 from app.services.zmq_bridge import send_teleop_cmd
-from app.services import jetson_proxy
+from app.services import adaptive_proxy
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 logger = logging.getLogger(__name__)
@@ -101,20 +101,20 @@ async def ws_control(websocket: WebSocket, token: str = Query(default="")):
 
             elif msg_type == "set_mode":
                 mode = str(msg.get("mode", "")).upper()
-                if mode == "FOLLOW":
+                if mode in {"FOLLOW", "CRUISE", "CAUTIOUS", "AVOID", "YIELD"}:
                     await websocket.send_text(
                         json.dumps(
                             {
-                                "error": "FOLLOW mode has been removed"
+                                "error": "Legacy context-aware mode overrides have been removed; use start/stop."
                             }
                         )
                     )
                     continue
-                result = await jetson_proxy.set_mode(mode)
+                result = await adaptive_proxy.set_mode(mode)
                 await websocket.send_text(json.dumps(result))
 
             elif msg_type == "clear_mode":
-                result = await jetson_proxy.clear_mode()
+                result = await adaptive_proxy.clear_mode()
                 await websocket.send_text(json.dumps(result))
 
             elif msg_type == "stop":
@@ -122,7 +122,7 @@ async def ws_control(websocket: WebSocket, token: str = Query(default="")):
                 latest_cmd["linear_y"] = 0.0
                 latest_cmd["angular_z"] = 0.0
                 cmd_event.set()
-                result = await jetson_proxy.force_stop()
+                result = await adaptive_proxy.force_stop()
                 await websocket.send_text(json.dumps(result))
 
     except WebSocketDisconnect:

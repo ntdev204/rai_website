@@ -21,13 +21,13 @@ type TerminalMessage = {
 };
 
 const TARGETS = [
-  { value: "jetson", label: "Jetson" },
+  { value: "laptop", label: "Laptop" },
   { value: "raspi", label: "RasPi" },
 ] as const;
 
 export default function TerminalPage() {
   const { user } = useAuth();
-  const [target, setTarget] = useState<(typeof TARGETS)[number]["value"]>("jetson");
+  const [target, setTarget] = useState<(typeof TARGETS)[number]["value"]>("laptop");
   const [command, setCommand] = useState("");
   const [messages, setMessages] = useState<TerminalMessage[]>([]);
   const nextIdRef = useRef(1);
@@ -116,7 +116,7 @@ export default function TerminalPage() {
         <div>
           <h2 className="text-2xl font-bold tracking-tight text-slate-800">SSH Terminal</h2>
           <p className="text-sm text-slate-500">
-            Browser terminal bridge for Jetson and Raspberry Pi over the backend WebSocket.
+            Browser terminal bridge for the laptop runtime and Raspberry Pi over the backend WebSocket.
           </p>
         </div>
         <div className="flex items-center gap-3">
@@ -126,7 +126,7 @@ export default function TerminalPage() {
             onValueChange={(value) => {
               setMessages([]);
               nextIdRef.current = 1;
-              setTarget(value as "jetson" | "raspi");
+              setTarget(value as "laptop" | "raspi");
             }}
           >
             <SelectTrigger className="w-[140px] rounded-lg border-slate-300 bg-white text-slate-700 shadow-sm">

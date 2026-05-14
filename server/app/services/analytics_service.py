@@ -13,7 +13,7 @@ from app.core.config import settings
 from app.core.database import AsyncSessionLocal
 from app.models.analytics_snapshot import AnalyticsSnapshot
 from app.models.event_log import EventLog
-from app.services import jetson_proxy
+from app.services import adaptive_proxy
 from app.services.log_service import log_event
 from app.services.zmq_bridge import get_latest_telemetry
 
@@ -54,7 +54,7 @@ async def stop_analytics_collector() -> None:
 
 async def collect_snapshot() -> dict[str, Any]:
     telemetry = await get_latest_telemetry()
-    ai_metrics = await jetson_proxy.get_metrics()
+    ai_metrics = await adaptive_proxy.get_metrics()
     snapshot = _build_snapshot(telemetry, ai_metrics)
 
     async with AsyncSessionLocal() as db:
@@ -225,8 +225,12 @@ async def _emit_state_events(snapshot: AnalyticsSnapshot, ai_metrics: dict[str, 
     ai_online = bool(ai_metrics) and "error" not in ai_metrics
     if _last_ai_online is None or _last_ai_online != ai_online:
         severity = "info" if ai_online else "warning"
-        message = "Context-aware AI metrics connected" if ai_online else "Context-aware AI metrics unavailable"
-        await log_event("context_aware_connection", severity, "website.analytics", message)
+        message = (
+            "Adaptive context-aware runtime metrics connected"
+            if ai_online
+            else "Adaptive context-aware runtime metrics unavailable"
+        )
+        await log_event("adaptive_context_aware_connection", severity, "website.analytics", message)
         _last_ai_online = ai_online
 
     if snapshot.battery_percent is not None and snapshot.battery_percent <= 20:

@@ -21,6 +21,9 @@ interface RobotTelemetry {
 }
 
 interface AiMetrics {
+  state?: string;
+  ready?: boolean;
+  result_connected?: boolean;
   fps?: number;
   mode?: string;
   persons?: number;
@@ -87,8 +90,8 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <MetricCard
-          title="Current Mode"
-          value={ai.mode ?? "-"}
+          title="Adaptive State"
+          value={ai.state ?? ai.mode ?? "-"}
           icon={<Activity className="w-5 h-5 text-blue-500" />}
         />
         <MetricCard
@@ -101,12 +104,12 @@ export default function Dashboard() {
           icon={<Battery className="w-5 h-5 text-emerald-500" />}
         />
         <MetricCard
-          title="Stream FPS"
+          title="Adaptive FPS"
           value={formatNumber(ai.fps)}
           icon={<Video className="w-5 h-5 text-purple-500" />}
         />
         <MetricCard
-          title="Tracked Persons"
+          title="Tracked Entities"
           value={typeof ai.persons === "number" ? ai.persons : "-"}
           icon={<Users className="w-5 h-5 text-amber-500" />}
         />

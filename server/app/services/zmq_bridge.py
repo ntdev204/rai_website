@@ -22,9 +22,12 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 _latest_telemetry: dict[str, Any] = {"connected": False}
+_latest_camera_jpeg: bytes | None = None
+_latest_camera_received_at: float | None = None
 _latest_map_png: bytes | None = None
 _latest_map_received_at: float | None = None
 _telemetry_lock = asyncio.Lock()
+_camera_lock = asyncio.Lock()
 _map_lock = asyncio.Lock()
 _cmd_lock = asyncio.Lock()
 _bridge_running = False
@@ -60,12 +63,12 @@ async def start_zmq_bridge() -> None:
     _map_sock.setsockopt(zmq.LINGER, 0)
     _map_sock.setsockopt(zmq.TCP_KEEPALIVE, 1)
     _map_sock.setsockopt(zmq.TCP_KEEPALIVE_IDLE, 60)
-    _map_sock.setsockopt_string(zmq.SUBSCRIBE, "MAP:")
+    _map_sock.setsockopt_string(zmq.SUBSCRIBE, "")
     _map_sock.connect(f"tcp://{_active_scada_host}:{settings.ZMQ_CAMERA_PORT}")
 
     _bridge_running = True
     _telemetry_task = asyncio.create_task(_telemetry_recv_loop())
-    _map_task = asyncio.create_task(_map_recv_loop())
+    _map_task = asyncio.create_task(_camera_map_recv_loop())
     logger.info(
         "ZMQ bridge started: Pi=%s cmd=%d telemetry=%d camera=%d",
         _active_scada_host,
@@ -179,22 +182,26 @@ async def _telemetry_recv_loop() -> None:
             await asyncio.sleep(0.2)
 
 
-async def _map_recv_loop() -> None:
+async def _camera_map_recv_loop() -> None:
+    global _latest_camera_jpeg, _latest_camera_received_at
     global _latest_map_png, _latest_map_received_at
 
     while _bridge_running:
         try:
             raw_msg = await asyncio.wait_for(_map_sock.recv(), timeout=1.0)
-            if not raw_msg.startswith(b"MAP:"):
+            if raw_msg.startswith(b"MAP:"):
+                png = raw_msg[4:]
+                if not png:
+                    continue
+                async with _map_lock:
+                    _latest_map_png = bytes(png)
+                    _latest_map_received_at = time.time()
                 continue
 
-            png = raw_msg[4:]
-            if not png:
-                continue
-
-            async with _map_lock:
-                _latest_map_png = bytes(png)
-                _latest_map_received_at = time.time()
+            if _looks_like_jpeg(raw_msg):
+                async with _camera_lock:
+                    _latest_camera_jpeg = bytes(raw_msg)
+                    _latest_camera_received_at = time.time()
         except asyncio.TimeoutError:
             continue
         except asyncio.CancelledError:
@@ -340,3 +347,12 @@ async def get_latest_telemetry() -> dict[str, Any]:
 async def get_latest_map_png() -> tuple[bytes | None, float | None]:
     async with _map_lock:
         return _latest_map_png, _latest_map_received_at
+
+
+async def get_latest_camera_jpeg() -> tuple[bytes | None, float | None]:
+    async with _camera_lock:
+        return _latest_camera_jpeg, _latest_camera_received_at
+
+
+def _looks_like_jpeg(payload: bytes) -> bool:
+    return len(payload) > 4 and payload.startswith(b"\xff\xd8") and payload.endswith(b"\xff\xd9")
