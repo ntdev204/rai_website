@@ -2,9 +2,17 @@ FROM node:22-alpine
 
 WORKDIR /app
 
-# Install dependencies
+# Configure npm to be resilient against slow/unstable networks
+RUN npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && npm config set fetch-retries 5 \
+ && npm config set fetch-timeout 300000 \
+ && npm config set prefer-offline true
+
+# Install dependencies (cache mount avoids re-download on rebuild)
 COPY package.json package-lock.json* ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline || npm ci
 
 # Copy source code
 COPY . .
